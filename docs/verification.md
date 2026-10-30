@@ -1,5 +1,28 @@
 # Verification record
 
+## Dashboard startup without redundant live discovery - 2026-10-31 (Asia/Bangkok)
+
+The previous deadline change still left a failing live `/markets` request on
+every page load. Startup now initializes its contract list from scanner state.
+Scanner responses include `universe_symbols` before filters, so the picker keeps
+the complete universe even when a filter hides all table rows. An idle scanner
+still starts an initial background scan; a cached scan retains its historical
+warning and can be refreshed through the existing Retry public data action.
+The strict `/markets` endpoint retains its live-only behavior.
+
+| Check | Observed result |
+| --- | --- |
+| Scanner backend regression suite | 6 passed, 1 non-failing Starlette TestClient warning |
+| Frontend unit suite | 14 passed |
+| Browser suite | 15 passed, including no startup discovery request and filter-independent contract picker |
+| Production build | Passed |
+| Real built dashboard on port 8000 | 522 saved symbols and picker entries; BTC archived candles rendered |
+| Real browser after 16 seconds of polling | Zero markets requests, zero HTTP error responses, zero JavaScript page errors |
+
+The updated backend and frontend are running locally. Historical charts remain
+explicitly labeled and have no current entry or target levels. This fixes the
+redundant startup failure; it does not establish live provider connectivity.
+
 ## Backend discovery deadline and recovery - 2026-10-31 (Asia/Bangkok)
 
 The original running backend returned `/api/v1/markets` 504 after 31.52 seconds.

@@ -126,6 +126,13 @@ second request for the same timeframe returns the existing state, while a differ
 `maximum_volatility`, `watchlist_only`, `sort`, `descending`. Every discovered market
 remains visible by default; filters are applied only on request.
 
+The response includes `universe_symbols`, the complete symbol list for this scan
+before user filters. The dashboard uses it for contract pickers and initializes
+from the scanner rather than making a separate live `/markets` request on load.
+When scan status is `cached`, these are saved observations and current contract
+eligibility remains unverified. The strict `/markets` API still performs live
+discovery and can report provider failures to clients that explicitly request it.
+
 Rows disclose price, quote volume, spread, liquidity warning, ATR%, volatility
 status, timeframe, EMA trend, RSI, MACD, ADX, structure, LONG/SHORT evidence scores,
 regime, data freshness, quality and classification. None of these is a win

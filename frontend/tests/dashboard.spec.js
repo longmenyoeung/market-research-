@@ -110,6 +110,26 @@ test('saved universe opens historical candles without retrying live analysis or 
  expect(analysisRequests).toBe(0);
 });
 
+test('dashboard startup uses the saved scanner universe without a failing live markets request',async({page})=>{
+ const discoveryRequests=[],failedResponses=[];
+ await setup(page,{saved:true});
+ page.on('request',request=>{if(new URL(request.url()).pathname==='/api/v1/markets')discoveryRequests.push(request.url());});
+ page.on('response',response=>{if(response.status()>=400)failedResponses.push(response.url());});
+ await page.route('**/api/v1/scanner?*',route=>{
+  if(new URL(route.request().url()).searchParams.has('minimum_volume'))return route.fulfill({json:{status:'cached',rows:[],universe_symbols:['TESTUSDT'],total:1,displayed:0,overview:{eligible:1,usable:0}}});
+  return route.fallback();
+ });
+ await page.goto('/');await page.getByRole('button',{name:'Market scanner',exact:true}).click();
+ await expect(page.getByRole('button',{name:'TESTUSDT PERPETUAL'})).toBeVisible();
+ await page.getByLabel('Min. quote volume').fill('99999999999');
+ await expect(page.getByText('0 shown / 1 eligible contracts')).toBeVisible();
+ await page.getByRole('button',{name:'Chart workspace',exact:true}).click();
+ await expect(page.getByLabel('Analysis contract')).toHaveValue('TESTUSDT');
+ await page.getByRole('button',{name:'View saved candles'}).click();
+ await expect(page.getByText('Saved candles - historical chart')).toBeVisible();
+ expect(discoveryRequests).toEqual([]);expect(failedResponses).toEqual([]);
+});
+
 test('live analysis timeout falls back to saved candles without claiming a fresh setup',async({page})=>{
  await setup(page);await page.route('**/api/v1/analysis',route=>route.fulfill({status:504,json:{error:{message:'Public market-data request timed out.'}}}));
  await page.goto('/');await page.getByRole('button',{name:'Chart workspace',exact:true}).click();

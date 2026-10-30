@@ -32,6 +32,9 @@ after connection failures. During the pause the API returns 503 with a
 `Retry-After` header, so repeated requests do not each wait through HTTP retries.
 These settings are documented in `backend/.env.example`; a timeout still means
 fresh provider data is unavailable.
+Dashboard startup loads the scanner's saved universe without requesting live
+`/markets` discovery separately. Use **Retry public data** to request a new scan;
+filtering the scanner keeps the complete contract list available in the picker.
 
 If Chrome shows a dinosaur page or `ERR_INTERNET_DISCONNECTED` for
 `127.0.0.1`, check the DevTools **Network** throttling menu and select

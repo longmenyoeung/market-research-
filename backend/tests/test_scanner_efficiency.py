@@ -136,6 +136,11 @@ async def test_saved_market_rows_restore_as_stale_and_survive_provider_timeout(s
         await restored.initialize()
         snapshot=await restored.scanner(ScanFilter())
         assert snapshot['status']=='cached' and snapshot['total']==2
+        expected_symbols=[row['symbol'] for row in snapshot['rows']]
+        assert sorted(snapshot['universe_symbols'])==sorted(expected_symbols)
+        filtered=await restored.scanner(ScanFilter(minimum_volume=10**20))
+        assert filtered['rows']==[]
+        assert sorted(filtered['universe_symbols'])==sorted(expected_symbols)
         assert all(row['quality']=='stale' and row['classification']=='NO TRADE' for row in snapshot['rows'])
         assert all(row['long_score'] is None and row['short_score'] is None for row in snapshot['rows'])
         await restored.start_scan('1h');await restored.scan_task
