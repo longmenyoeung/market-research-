@@ -27,6 +27,11 @@ candles when that symbol and timeframe have an archive; it does not turn the
 archive into a current analysis. Select
 **Retry public data** after the connection recovers. Follow the
 [network check in deployment](docs/deployment.md#provider-failures-and-capacity).
+Live contract discovery has a 15-second total time budget and a 30-second pause
+after connection failures. During the pause the API returns 503 with a
+`Retry-After` header, so repeated requests do not each wait through HTTP retries.
+These settings are documented in `backend/.env.example`; a timeout still means
+fresh provider data is unavailable.
 
 If Chrome shows a dinosaur page or `ERR_INTERNET_DISCONNECTED` for
 `127.0.0.1`, check the DevTools **Network** throttling menu and select

@@ -6,6 +6,7 @@ import logging
 from app.adapters.base import MarketDataError, MarketDataProvider
 from app.core.config import Settings
 from app.market_data.cache import AsyncTTLCache
+from app.market_data.discovery import DiscoveryLoader
 from app.market_data.validation import assess_quality
 from app.schemas.candles import CandleQuery, CandleResponse, CandleUpdate, StoredCandles, INTERVAL_MS
 from app.schemas.markets import DiscoveryResponse
@@ -22,11 +23,13 @@ class MarketDataService:
         self.analysis_dirty: set[tuple[str,str]] = set()
         self.analysis_window_capacity = settings.calculation_cache_entries
         self.discovery = AsyncTTLCache[DiscoveryResponse](settings.discovery_ttl_seconds, 1, 1)
+        self.discovery_loader = DiscoveryLoader(provider, settings.discovery_timeout_seconds,
+                                                settings.discovery_failure_cooldown_seconds)
         self.candles = AsyncTTLCache[CandleResponse](settings.candle_ttl_seconds,
                                                    settings.cache_max_entries, settings.max_pending_requests)
 
     async def discover_contracts(self) -> DiscoveryResponse:
-        result = await self.discovery.get("universe", self.provider.discover_contracts)
+        result = await self.discovery.get("universe", self.discovery_loader.load)
         return result.value.model_copy(update={"cache_hit": result.hit, "cache_age_seconds": result.age_seconds})
 
     async def require_symbol(self, symbol: str) -> None:

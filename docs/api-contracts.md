@@ -36,6 +36,16 @@ Returns provider, fetched_at (original local UTC reception), timestamp_basis,
 count, contracts, eligibility_notice, cache_hit and cache_age_seconds.
 Discovery TTL defaults to 60 seconds.
 
+Live discovery has a separate total deadline of 15 seconds by default
+(`MCA_DISCOVERY_TIMEOUT_SECONDS`). It includes the adapter queue, pacing,
+HTTP attempts and backoff. Expiry returns 504 `upstream_timeout`. After a
+timeout or connection failure, discovery pauses for 30 seconds by default
+(`MCA_DISCOVERY_FAILURE_COOLDOWN_SECONDS`). The first failure includes
+`Retry-After`; requests during the pause return 503 `discovery_cooldown` with
+the remaining retry period. Markets, candles and analysis share this state
+and the same in-flight discovery. Expired metadata is never promoted to a
+current contract universe. Provider access and rate-limit blocks still apply.
+
 Contracts contain symbol, base_asset, quote_asset, margin_asset, contract_type and
 status and available public contract `constraints`, sorted alphabetically. Every match has TRADING/PERPETUAL/USDT quote/USDT
 margin. No liquidity filtering. This is metadata eligibility, not trading eligibility.
@@ -229,10 +239,11 @@ When present, retry seconds also appear in HTTP Retry-After and are clamped by
 | 502 | upstream_unavailable | Transport failure or exhausted 408/5xx retries |
 | 503 | access_restricted | 403/451 without bypass; optional metrics propagate it |
 | 503 | rate_limited / provider_banned | 429/418 cooldown |
+| 503 | discovery_cooldown | Waiting to retry failed live discovery; honor Retry-After |
 | 503 | busy | Distinct pending-request capacity reached |
 | 503 | clock_skew | Exchange/local clocks differ by over 30 seconds |
 | 503 | storage_unavailable | Archive read unavailable; live candle reads still succeed if the write fails |
-| 504 | upstream_timeout | Exhausted timeouts |
+| 504 | upstream_timeout | Exhausted HTTP timeouts or total discovery deadline |
 
 Raw provider errors are excluded. Exchange execution routes do not exist; attempting
 them returns 404/405. Mutating local platform routes require the auth above. Startup

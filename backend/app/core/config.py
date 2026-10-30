@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     ban_cooldown_seconds: int = Field(default=86400, ge=60, le=259200)
     retry_after_max_seconds: int = Field(default=86400, ge=60, le=604800)
     discovery_ttl_seconds: float = Field(default=60, ge=1, le=3600)
+    discovery_timeout_seconds: float = Field(default=15, ge=0.1, le=120)
+    discovery_failure_cooldown_seconds: int = Field(default=30, ge=1, le=300)
     candle_ttl_seconds: float = Field(default=5, ge=0.1, le=60)
     cache_max_entries: int = Field(default=256, ge=1, le=4096)
     max_pending_requests: int = Field(default=32, ge=1, le=256)

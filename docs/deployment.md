@@ -44,6 +44,16 @@ but this delivery has been exercised on Windows.
 
 Health reports process liveness, not exchange reachability. A healthy local server
 can show provider errors while the offline planner and archive remain usable.
+The application maps public HTTP timeouts to 504; that status does not imply
+a slow SQL query or a Uvicorn request deadline. Discovery has a 15-second total
+budget, including the adapter queue and retries. After a connection failure,
+it pauses retries for 30 seconds and returns 503 with `Retry-After` to repeated
+requests. Configure these using `MCA_DISCOVERY_TIMEOUT_SECONDS` and
+`MCA_DISCOVERY_FAILURE_COOLDOWN_SECONDS`. They do not change the time allowed
+for an entire report or the provider's access and rate-limit rules.
+Uvicorn's `--timeout-keep-alive` controls idle connections between requests;
+increasing it cannot fix an outbound public-data timeout. See the
+[Uvicorn timeout documentation](https://uvicorn.dev/settings/#timeouts).
 If the dashboard says `Public market-data request timed out`, check the network
 from the same computer before retrying:
 

@@ -1,5 +1,30 @@
 # Verification record
 
+## Backend discovery deadline and recovery - 2026-10-31 (Asia/Bangkok)
+
+The original running backend returned `/api/v1/markets` 504 after 31.52 seconds.
+Code inspection traced the response to the public adapter's `upstream_timeout`
+mapping, with three HTTP attempts, rather than a database or Uvicorn timeout.
+Discovery now shares one bounded load across its callers, with a configurable
+15-second total deadline and a 30-second pause after connection failures.
+Requests during the pause return 503 `discovery_cooldown` and `Retry-After`.
+Provider access blocks, rate limits and metadata freshness rules still apply.
+
+| Check | Observed result |
+| --- | --- |
+| Full backend suite | 222 passed, 1 non-failing Starlette TestClient warning |
+| Real markets request after backend restart | 504 in 15.156 seconds, Retry-After 30 |
+| Immediate repeated markets request | 503 discovery_cooldown in 0.016 seconds |
+| Immediate analysis request | 503 discovery_cooldown in under 0.001 seconds |
+| Health | 200 in 0.063 seconds |
+| Real saved BTCUSDT 1h archive | 200 in 0.031 seconds, 399 historical candles |
+
+Mock tests verify cancellation of stalled work, concurrent request sharing,
+cooldown expiry, recovery to fresh discovery and cache reuse, and API retry
+headers. No fake data was used in the real endpoint checks. Public Binance
+connectivity remains unavailable in this observation; a shorter timeout does
+not repair that external connection. The updated backend is running on port 8000.
+
 ## Analysis timeout and archived chart - 2026-10-31 (Asia/Bangkok)
 
 The local backend returned health and the cached scanner successfully, but
