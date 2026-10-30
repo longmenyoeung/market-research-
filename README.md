@@ -63,6 +63,13 @@ The development dashboard opens at http://127.0.0.1:5173 and proxies API/WebSock
 
 ## Use the platform
 
+**BUY / SELL indicator:** open the new sidebar page to build a chart with
+EMA overlays, RSI/MACD/ATR panels, past BUY/SELL arrows, support/resistance and
+structure drawings. Select a past marker to draw its hypothetical close
+reference, ATR stop and 1R/2R/3R targets. Saved-candle studies work during the
+provider outage and are always historical. Live mode requires the full current
+analysis checks. See [the rule and timing documentation](docs/indicator-study.md).
+
 1. Open Overview. Discovery populates the full eligible universe and an initial scan runs in the background. Provider failures appear explicitly; no demonstration data replaces live data.
 2. Open Market scanner. All eligible markets remain visible by default, including low-volume, wide-spread and volatile pairs. Set filters explicitly and inspect freshness before selecting a market.
 3. Open a contract in Chart workspace and generate analysis. Select the primary timeframe, higher context and lower momentum; empty context choices use automatic defaults. Toggle indicator overlays and annotation groups. The **Both / LONG / SHORT / Hide** control draws hypothetical entry regions, stops, 1R/2R/3R take-profit levels and risk/reward shading when fresh source data supports a scenario. The drawings disappear when the report becomes stale or is classified NO TRADE. When the public WebSocket is unavailable, the selected chart uses labeled REST candle snapshots every 15 seconds; open candles remain provisional and REST does not provide a last-trade event timestamp.

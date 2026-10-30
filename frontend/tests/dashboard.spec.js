@@ -35,6 +35,17 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
   if(path==='/api/v1/scanner/refresh')return route.fulfill({json:{status:offline?'error':'complete'}});
   if(path==='/api/v1/scanner')return route.fulfill({json:offline?{status:'error',error:'access_restricted',message:'Provider access unavailable in this test',rows:[],total:0,processed:0,overview:{eligible:0}}:{status:saved?'cached':'complete',timeframe:'1h',message:saved?'Saved discovery; all data is stale.':undefined,total:1,processed:1,displayed:1,rows:[saved?{...row,quality:'stale',classification:'NO TRADE',long_score:null,short_score:null}:row],overview:{eligible:1,usable:saved?0:1,liquidity_warnings:0,long_candidates:0,short_candidates:0,mean_atr_percent:1.5}}});
   if(path==='/api/v1/analysis')return route.fulfill({json:report});
+  if(path==='/api/v1/indicator-study'){
+   if(request.postDataJSON().source==='live')return route.fulfill({status:504,json:{error:{message:'Synthetic live provider timeout'}}});
+   const studyReport=structuredClone(report);
+   const signals=['BUY','SELL'].map((side,index)=>{
+    const candle=report.candles.at(index===0?-40:-20),reference=Number(candle.close),risk=2,direction=side==='BUY'?1:-1;
+    return {id:`study-${side}`,side,time:candle.open_time,known_at:candle.close_time,timeframe:'1h',reference,stop:reference-direction*risk,targets:[1,2,3].map(r=>reference+direction*risk*r),rsi:side==='BUY'?55:45,adx:25,relative_volume:1.2,rule:'Synthetic test marker',level_rule:'Synthetic ATR test guide'};
+   });
+   studyReport.indicator_study={source:'archive',historical:true,as_of:report.candles.at(-1).close_time,current_signal:'NO TRADE',current_reason:'Saved candles are historical; no current direction.',signals,evaluation:{BUY:{trend:true,momentum:true,strength:true,volume:true},SELL:{trend:false,momentum:false,strength:true,volume:true}},evidence_groups:{trend:'EMA alignment',momentum:'RSI and MACD',strength:'ADX',volume:'Relative volume'},rules:request.postDataJSON().rules,limitations:['Synthetic browser fixture; no live data.']};
+   studyReport.structure.annotations.push(...signals.map(signal=>({id:signal.id,kind:'study_signal',label:`Past ${signal.side}`,timeframe:'1h',confirmed:true,confirmed_at:signal.known_at,points:[{time:signal.time,price:signal.reference}],rule:signal.rule})));
+   return route.fulfill({json:studyReport});
+  }
   if(path==='/api/v1/history/reports')return route.fulfill({json:[{id:report.id,saved_at:report.generated_at,data:report}]});
   if(path==='/api/v1/backtests'){
    if(request.method()==='POST'){backtest={id:'test-run',status:'calculating',bars_loaded:120};return route.fulfill({status:202,json:backtest});}
@@ -138,6 +149,28 @@ test('live analysis timeout falls back to saved candles without claiming a fresh
  await expect(page.getByRole('alert')).toContainText('Public market-data request timed out.');
  await expect(page.locator('.chart-wrap canvas').first()).toBeVisible();
  await expect(page.locator('.plan-legend-card')).toHaveCount(0);
+});
+
+test('indicator studio draws historical BUY SELL studies and rejects a failed live refresh',async({page})=>{
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await setup(page,{saved:true});await page.goto('/');
+ await page.getByRole('button',{name:'BUY / SELL indicator',exact:true}).click();
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByText('HISTORICAL REPLAY - past signals only')).toBeVisible();
+ await expect(page.locator('.chart-wrap canvas').first()).toBeVisible();
+ await expect(page.locator('.study-signal-list button')).toHaveCount(2);
+ await expect(page.locator('.study-reference')).toContainText('Past SELL');
+ await page.locator('.study-signal-list button').filter({hasText:'Past BUY'}).click();
+ await expect(page.locator('.study-reference')).toContainText('Past BUY');
+ await expect(page.locator('.study-reference')).toContainText('TP3');
+ await expect(page.locator('.indicator-workspace > .provider-banner')).toContainText('NO TRADE');
+ await page.locator('.chart-wrap').scrollIntoViewIfNeeded();
+ await page.screenshot({path:'test-results/historical-indicator-study.png'});
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByRole('alert')).toContainText('Synthetic live provider timeout');
+ await expect(page.getByText('HISTORICAL REPLAY - past signals only')).toHaveCount(0);
+ expect(errors).toEqual([]);
 });
 
 test('scanner, charts, reports, watchlist and history render without JS errors',async({page})=>{

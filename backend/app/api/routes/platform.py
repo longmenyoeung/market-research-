@@ -7,6 +7,8 @@ from app.api.dependencies import require_mutation_access
 from app.backtesting.engine import BacktestRequest
 from app.schemas.platform import AnalysisRequest, Preferences, ScanRequest, ScanFilter, Watchlist
 from app.schemas.candles import Timeframe
+from app.schemas.indicator_study import IndicatorStudyRequest
+from app.services.indicator_study import create_study
 from app.services.platform import PlatformService
 
 router=APIRouter(prefix="/api/v1",tags=["analysis platform"])
@@ -45,6 +47,11 @@ async def scanner(filters: Annotated[ScanFilter,Query()], platform: Annotated[Pl
 async def analysis(body: AnalysisRequest, platform: Annotated[PlatformService,Depends(service)],
                    _: Annotated[None,Depends(require_mutation_access)]) -> dict:
     return await platform.report(body)
+
+@router.post("/indicator-study")
+async def indicator_study(body: IndicatorStudyRequest, platform: Annotated[PlatformService,Depends(service)],
+                          _: Annotated[None,Depends(require_mutation_access)]) -> dict:
+    return await create_study(platform, body)
 
 @router.get("/history/reports")
 async def history(platform: Annotated[PlatformService,Depends(service)], symbol: str | None=None,

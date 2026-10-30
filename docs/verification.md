@@ -1,5 +1,38 @@
 # Verification record
 
+## BUY / SELL indicator study - 2026-10-31 (Asia/Bangkok)
+
+Added a separate indicator page and validated local study endpoint. Historical
+BUY/SELL arrows combine EMA trend, grouped RSI/MACD momentum, ADX and relative
+volume on confirmed candles. Selecting a past signal draws its observed close
+reference, ATR stop and gross 1R/2R/3R target guides. Structure drawings and all
+existing indicator panels reuse the calculation engine. Archive mode makes no
+provider request and never produces a current directional candidate. Live mode
+requires the complete report engine and does not silently substitute an archive.
+
+| Check | Observed result |
+| --- | --- |
+| Full backend suite | 232 passed, 1 non-failing Starlette TestClient warning |
+| Frontend unit suite | 16 passed |
+| Browser suite | 16 passed |
+| Production build | Passed |
+| Real BTCUSDT 1h archive endpoint and built browser | HTTP 200; 399 confirmed candles, 53 indicator series, 263 annotations including 5 past SELL markers |
+| Real archive current eligibility | NO TRADE; no past BUY markers met these defaults |
+| Real chart visual inspection | EMA/Bollinger/VWAP overlays, volume/RSI/MACD/ATR panels, swing markers, structure lines, selected historical stop/reference/TP1-TP3 labels rendered |
+| Actual browser errors | Zero JavaScript errors and zero HTTP error responses |
+| Actual mobile page at 390 pixels | Body width 390; no horizontal body overflow |
+
+New tests cover BUY/SELL rule symmetry, prefix causality, marker spacing,
+warm-ups, missing conditions, gaps, offline archive calculations with forbidden
+provider access, insufficient data, failed live requests, stale live data,
+invalid guide geometry, historical marker selection and browser rendering.
+Synthetic fixtures remain test-only. Screenshots from the actual archived BTC
+study are under the ignored `frontend/test-results/site-inspection/` directory.
+
+This study is not a profitability validation or an execution simulator. The
+current live provider pipeline has not been verified successfully by this work.
+Rules, timing, sources and limitations are documented in `indicator-study.md`.
+
 ## Dashboard startup without redundant live discovery - 2026-10-31 (Asia/Bangkok)
 
 The previous deadline change still left a failing live `/markets` request on

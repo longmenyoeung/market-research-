@@ -140,6 +140,10 @@ probability or order instruction.
 
 ### POST /api/v1/analysis
 
+The companion `POST /api/v1/indicator-study` builds confirmed-candle marker
+studies and chart drawings. See [indicator-study.md](indicator-study.md) for its
+validated source/rule inputs, historical timing and current-data gates.
+
 Body: `symbol`, `timeframe`, up to three `higher_timeframes`, optional
 `lower_timeframe`, `include_derivatives`. Returns the report and persists an
 immutable history record when a fresh calculation is made. Identical requests reuse the report cache for up to 20 seconds.

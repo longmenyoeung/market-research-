@@ -42,6 +42,7 @@ def test_exact_api_surface_is_read_only(settings):
         "/api/v1/history/candles": {"get"}, "/api/v1/settings": {"get", "put"},
         "/api/v1/watchlist": {"get", "put"}, "/api/v1/scanner": {"get"},
         "/api/v1/scanner/refresh": {"post"}, "/api/v1/analysis": {"post"},
+        "/api/v1/indicator-study": {"post"},
         "/api/v1/history/reports": {"get"}, "/api/v1/notifications": {"get"},
         "/api/v1/planner": {"post"}, "/api/v1/backtests": {"get", "post"},
         "/api/v1/backtests/{run_id}": {"get"}, "/api/v1/backtests/{run_id}/cancel": {"post"}}
