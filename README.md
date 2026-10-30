@@ -4,6 +4,9 @@ A local Python/FastAPI + React platform for researching USDT perpetual futures b
 
 **The application is permanently analysis-only. It cannot place, modify or cancel orders or open or close positions. Trading cannot be enabled.** All exchange access uses public market-data endpoints and requires no exchange keys.
 
+The [Men Crypto Signal Pro comparison](docs/prompt-comparison.md) records which
+requirements are implemented, which differ, and which remain unfinished.
+
 ## Quick start (PowerShell)
 
 From the project root, use Python 3.11 and Node.js 22.12+ (Node 24 also works):
