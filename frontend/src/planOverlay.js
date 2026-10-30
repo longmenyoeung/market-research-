@@ -23,6 +23,7 @@ function validAnnotation(annotation,timeframe){
 export function selectPlanOverlays(report,mode='both',now=Date.now()){
  const empty=(reason)=>({availableSides:[],visibleSides:[],annotations:[],reason});
  if(!report)return empty('Generate an analysis to see hypothetical LONG and SHORT price levels.');
+ if(report.source==='local_archive')return empty('Saved candles are historical. No current entry, stop, or take-profit levels are available.');
  const generated=Date.parse(report.generated_at),expiry=report.valid_until_ms;
  if(report.manual_only!==true||report.market_overview?.quality?.status!=='usable'||
     report.assessment?.classification==='NO TRADE'||!Number.isFinite(generated)||

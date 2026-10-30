@@ -1,5 +1,28 @@
 # Verification record
 
+## Analysis timeout and archived chart - 2026-10-31 (Asia/Bangkok)
+
+The local backend returned health and the cached scanner successfully, but
+live contract discovery timed out. The scanner had 522 saved contracts and no
+usable current analyses. A direct archive request returned 399 actual BTCUSDT
+1h candles with `source=local_archive`, `live_data=false`, and historical quality.
+The chart now opens those saved candles without a live analysis request when
+the scanner is cached. If a live analysis request times out, it displays the
+saved chart when available and preserves the timeout message. Archived charts
+contain candles and volume only; current analysis, entry, stop and target
+drawings remain unavailable.
+
+| Check | Observed result |
+| --- | --- |
+| Backend suite | 217 passed, 1 non-failing Starlette TestClient warning |
+| Frontend unit suite | 14 passed |
+| Browser suite | 14 passed, including cached-universe selection and simulated analysis 504 |
+| Production build and local static bundle | Passed; bundle served over port 8000 |
+
+The provider timeout still prevents live analysis at this moment. Archive
+availability varies by contract and timeframe, and saved candles are not a
+current market quote.
+
 ## Browser offline error diagnosis — 2026-10-31 (Asia/Bangkok)
 
 Both local services responded during diagnosis: `127.0.0.1:8000/health`,

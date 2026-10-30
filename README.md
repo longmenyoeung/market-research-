@@ -20,6 +20,11 @@ Open **http://127.0.0.1:8000** for the dashboard or **http://127.0.0.1:8000/docs
 If the official Binance public-data connection fails, the dashboard shows the
 last saved market scan when available. Those rows are explicitly stale and all
 candidate classifications are disabled until fresh data succeeds. Select
+an archived contract to view its saved candlesticks and volume in Chart workspace.
+The chart shows the last saved candle time and has no current LONG/SHORT entry,
+stop, or take-profit levels. A live analysis timeout also falls back to saved
+candles when that symbol and timeframe have an archive; it does not turn the
+archive into a current analysis. Select
 **Retry public data** after the connection recovers. Follow the
 [network check in deployment](docs/deployment.md#provider-failures-and-capacity).
 

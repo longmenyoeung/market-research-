@@ -30,6 +30,7 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
    const candle={...report.candles.at(-1),open_time:openTime,close_time:openTime+3599999,is_closed:false};
    return route.fulfill({json:{provider:'binance_usdm',symbol:'TESTUSDT',timeframe:'1h',fetched_at:new Date().toISOString(),server_time:Date.now(),quality:{status:restQuality,missing_intervals:0,warnings:['Synthetic browser test data']},candles:[candle]}});
   }
+  if(path==='/api/v1/history/candles')return route.fulfill({json:{symbol:'TESTUSDT',timeframe:'1h',source:'local_archive',live_data:false,candles:report.candles,quality:{status:'historical',missing_intervals:0,warnings:['Local archive only; not live data.']}}});
   if(path==='/api/v1/watchlist'){if(request.method()==='PUT')watchlist=request.postDataJSON();return route.fulfill({json:watchlist});}
   if(path==='/api/v1/scanner/refresh')return route.fulfill({json:{status:offline?'error':'complete'}});
   if(path==='/api/v1/scanner')return route.fulfill({json:offline?{status:'error',error:'access_restricted',message:'Provider access unavailable in this test',rows:[],total:0,processed:0,overview:{eligible:0}}:{status:saved?'cached':'complete',timeframe:'1h',message:saved?'Saved discovery; all data is stale.':undefined,total:1,processed:1,displayed:1,rows:[saved?{...row,quality:'stale',classification:'NO TRADE',long_score:null,short_score:null}:row],overview:{eligible:1,usable:saved?0:1,liquidity_warnings:0,long_candidates:0,short_candidates:0,mean_atr_percent:1.5}}});
@@ -94,6 +95,29 @@ test('saved market universe stays visible and clearly stale during a provider ou
  await page.getByRole('button',{name:'Market scanner',exact:true}).click();
  await expect(page.getByRole('button',{name:'TESTUSDT PERPETUAL'})).toBeVisible();
  await expect(page.locator('.scanner-table')).toContainText('NO TRADE');
+});
+
+test('saved universe opens historical candles without retrying live analysis or drawing trade levels',async({page})=>{
+ let analysisRequests=0;
+ await setup(page,{saved:true});page.on('request',request=>{if(new URL(request.url()).pathname==='/api/v1/analysis')analysisRequests++;});
+ await page.goto('/');await page.getByRole('button',{name:'Market scanner',exact:true}).click();
+ await page.getByRole('button',{name:'Analyze TESTUSDT',exact:true}).click();
+ await expect(page.getByText('Saved candles - historical chart')).toBeVisible();
+ await expect(page.locator('.chart-wrap canvas').first()).toBeVisible();
+ await expect(page.getByText('NO TRADE',{exact:true}).last()).toBeVisible();
+ await expect(page.locator('.plan-legend-card')).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Read full report'})).toHaveCount(0);
+ expect(analysisRequests).toBe(0);
+});
+
+test('live analysis timeout falls back to saved candles without claiming a fresh setup',async({page})=>{
+ await setup(page);await page.route('**/api/v1/analysis',route=>route.fulfill({status:504,json:{error:{message:'Public market-data request timed out.'}}}));
+ await page.goto('/');await page.getByRole('button',{name:'Chart workspace',exact:true}).click();
+ await page.getByRole('button',{name:'Generate analysis'}).click();
+ await expect(page.getByText('Saved candles - historical chart')).toBeVisible();
+ await expect(page.getByRole('alert')).toContainText('Public market-data request timed out.');
+ await expect(page.locator('.chart-wrap canvas').first()).toBeVisible();
+ await expect(page.locator('.plan-legend-card')).toHaveCount(0);
 });
 
 test('scanner, charts, reports, watchlist and history render without JS errors',async({page})=>{
