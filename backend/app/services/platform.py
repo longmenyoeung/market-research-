@@ -196,6 +196,14 @@ class PlatformService:
             if not scanner and not df.empty:
                 for side, scenario in assessment["scenarios"].items():
                     if scenario.get("entry"):
+                        zone_start = int(df.time.iloc[max(0, len(df)-30)])
+                        zone_end = int(df.time.iloc[-1])
+                        annotations.append({"id": f"{side}-Entry-region", "kind": "plan",
+                            "label": f"{side} Entry region", "timeframe": request.timeframe, "region": "entry",
+                            "points": [{"time": zone_start, "price": scenario["entry_region"][0]},
+                                       {"time": zone_end, "price": scenario["entry_region"][1]}],
+                            "confirmed": False, "confirmed_at": now_ms,
+                            "rule": "Hypothetical entry region: ask for LONG or bid for SHORT, plus/minus 0.1 ATR. Horizontal width shows 30 observed bars, not a timing forecast. No execution."})
                         for label, price in [("Entry", scenario["entry"]), ("Stop", scenario["stop"]), *[(f"Target {i+1}",t) for i,t in enumerate(scenario["targets"])]]:
                             annotations.append({"id": f"{side}-{label}", "kind": "plan", "label": f"{side} {label}", "timeframe": request.timeframe,
                                 "points": [{"time": int(df.time.iloc[-1]), "price": price}], "confirmed": False,

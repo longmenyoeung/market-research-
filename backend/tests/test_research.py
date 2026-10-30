@@ -181,6 +181,31 @@ def test_complete_report_settings_planner_and_persistence(settings):
         assert client.get('/api/v1/watchlist').json()["symbols"]==["TESTUSDT"]
 
 
+def test_fresh_report_draws_both_hypothetical_entry_regions(settings):
+    class CurrentProvider(ResearchProvider):
+        async def fetch_candles(self, query):
+            page = await super().fetch_candles(query)
+            duration = INTERVAL_MS[query.timeframe]
+            candles = [candle.model_copy(update={"open_time": candle.open_time+duration,
+                        "close_time": candle.close_time+duration, "is_closed": index < len(page.candles)-1})
+                       for index, candle in enumerate(page.candles)]
+            return page.model_copy(update={"candles": candles})
+
+    with TestClient(create_app(settings,provider=CurrentProvider())) as client:
+        response = client.post('/api/v1/analysis',json={"symbol":"TESTUSDT","timeframe":"1h",
+                                                 "higher_timeframes":["4h"],"include_derivatives":False})
+        assert response.status_code == 200, response.text
+        report = response.json()
+        assert report["market_overview"]["quality"]["status"] == "usable"
+        for side, scenario in report["assessment"]["scenarios"].items():
+            assert scenario["entry"] is not None
+            region = next(a for a in report["structure"]["annotations"]
+                          if a["kind"] == "plan" and a["label"] == f"{side} Entry region")
+            assert region["timeframe"] == report["timeframe"]
+            assert [point["price"] for point in region["points"]] == scenario["entry_region"]
+            assert not region["confirmed"] and region["rule"]
+
+
 async def test_scanner_keeps_low_liquidity_and_filters_only_on_request(settings):
     from app.storage.platform import PlatformStore
     from app.market_data.service import MarketDataService

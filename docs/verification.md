@@ -1,5 +1,28 @@
 # Verification record
 
+## LONG/SHORT chart drawings and offline price map — 2026-10-30 (Asia/Bangkok)
+
+Fresh reports now provide a Both/LONG/SHORT/Hide chart control. The selected
+scenario draws its hypothetical entry region, stop reference, 1R/2R/3R
+take-profit lines, and risk/reward regions. The backend supplies the price
+coordinates, source timeframe and deterministic rule. Stale, incomplete,
+expired or NO TRADE reports do not display planning drawings. The manual Trade
+planner also draws an offline LONG or SHORT price map from validated,
+user-supplied prices; it contains no market candles or exchange action.
+
+| Check | Observed result |
+| --- | --- |
+| Full backend suite | 217 passed, 1 non-failing Starlette TestClient warning |
+| Frontend unit suite | 11 passed |
+| Browser suite | 11 passed, including both chart sides and offline planner diagrams |
+| Production build | Passed |
+| Visual inspection | Synthetic test charts for Both, LONG, SHORT and offline planner rendered with labeled levels |
+| Actual local planner API and browser | Hypothetical LONG inputs returned `hypothetical_only=true`; the built dashboard rendered the corresponding offline price map without browser errors |
+
+Synthetic browser fixtures are explicitly test-only. The workstation's live
+Binance public-data route remains intermittent, so these tests do not prove
+that a current exchange-derived scenario is available at the time of viewing.
+
 ## Live REST recovery and stale-snapshot fallback — 2026-10-30 (Asia/Bangkok)
 
 This is the latest workstation result. Official Binance public REST access was
