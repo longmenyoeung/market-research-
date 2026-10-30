@@ -1,0 +1,14 @@
+{
+  "source": "SYNTHETIC provider with zero network latency; not a live-exchange capacity certification",
+  "symbols": 500,
+  "timeframe": "1d",
+  "cold_scan_seconds": 214.196,
+  "warm_scan_seconds": 20.309,
+  "full_universe_quote_refresh_seconds": 0.304,
+  "cold_candle_fetches": 500,
+  "additional_warm_candle_fetches": 0,
+  "all_symbols_visible": true,
+  "liquidity_warnings": 50,
+  "cached_dataframe_megabytes": 91.39,
+  "memory_note": "DataFrame storage only; excludes Python objects, annotations, SQLite, browser and process overhead"
+}
