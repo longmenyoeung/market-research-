@@ -23,6 +23,14 @@ candidate classifications are disabled until fresh data succeeds. Select
 **Retry public data** after the connection recovers. Follow the
 [network check in deployment](docs/deployment.md#provider-failures-and-capacity).
 
+If Chrome shows a dinosaur page or `ERR_INTERNET_DISCONNECTED` for
+`127.0.0.1`, check the DevTools **Network** throttling menu and select
+**No throttling**, then reload. That browser error occurs before the app can
+load; a JavaScript `try/catch` cannot restore the connection. The app gives a
+clearer message and briefly pauses repeated background reads when an already
+loaded page encounters an offline browser. Port 5173 is the development UI;
+use port 8000 for normal local use.
+
 The existing workspace already has its Python and Node dependencies installed. A fresh installation must still use the commands above. Optional configuration:
 
 ```powershell

@@ -5,8 +5,22 @@ export function websocketProtocols() {
   const encoded=btoa(String.fromCharCode(...new TextEncoder().encode(applicationKey))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','');
   return [`mca-auth.${encoded}`];
 }
+function browserOffline() { return typeof navigator!=='undefined'&&navigator.onLine===false; }
+const offlineMessage='The browser is offline. In Chrome DevTools, set Network throttling to No throttling, then reload the page.';
+let offlineRetryAt=0;
 export async function api(path, options = {}) {
-  const response = await fetch(path, {...options, headers:{'Content-Type':'application/json', ...(applicationKey?{'X-API-Key':applicationKey}:{}), ...options.headers}, signal:options.signal || AbortSignal.timeout(180000)});
+  const {background=false,...requestOptions}=options;
+  if(!browserOffline())offlineRetryAt=0;
+  if(background&&browserOffline()&&Date.now()<offlineRetryAt)throw new Error(offlineMessage);
+  let response;
+  try {
+    response=await fetch(path, {...requestOptions, headers:{'Content-Type':'application/json', ...(applicationKey?{'X-API-Key':applicationKey}:{}), ...requestOptions.headers}, signal:requestOptions.signal || AbortSignal.timeout(180000)});
+  } catch(error) {
+    if(browserOffline()){offlineRetryAt=Date.now()+30000;throw new Error(offlineMessage);}
+    if(error?.name==='TimeoutError'||error?.name==='AbortError')throw new Error(`Local request timed out: ${path}. Check that the app server is running.`);
+    if(error instanceof TypeError)throw new Error(`The browser could not reach ${path}. Check the local app server and Chrome DevTools network settings.`);
+    throw error;
+  }
   if(response.status===401&&typeof window!=='undefined')window.dispatchEvent(new Event('mca:auth-required'));
   let body;
   try { body = await response.json(); } catch { throw new Error(`Server returned HTTP ${response.status}. Check the backend connection.`); }

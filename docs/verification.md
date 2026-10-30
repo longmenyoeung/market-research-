@@ -1,5 +1,25 @@
 # Verification record
 
+## Browser offline error diagnosis — 2026-10-31 (Asia/Bangkok)
+
+Both local services responded during diagnosis: `127.0.0.1:8000/health`,
+`127.0.0.1:5173/health` and the scanner through Vite all returned HTTP 200.
+A fresh Chromium session loaded the development dashboard without failed
+requests or JavaScript errors. Simulating browser Offline mode reproduced the
+exact `net::ERR_INTERNET_DISCONNECTED` failure on a loopback request.
+
+The frontend now reports a clear connection error after a failed fetch and
+pauses repeated background reads for 30 seconds while the browser remains
+offline. It still attempts local requests when the OS reports no internet, so
+an available loopback service stays usable. This cannot change Chrome's
+dinosaur error page, which appears before application JavaScript can run.
+
+| Check | Observed result |
+| --- | --- |
+| Frontend unit suite | 14 passed |
+| Browser suite | 12 passed, including simulated offline behavior |
+| Production build | Passed |
+
 ## LONG/SHORT chart drawings and offline price map — 2026-10-30 (Asia/Bangkok)
 
 Fresh reports now provide a Both/LONG/SHORT/Hide chart control. The selected

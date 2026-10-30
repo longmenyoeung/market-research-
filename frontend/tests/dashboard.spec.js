@@ -57,6 +57,21 @@ test('offline provider is explicit and planner stays usable',async({page})=>{
  await page.screenshot({path:'test-results/offline-planner.png',fullPage:true});
 });
 
+test('browser offline mode shows a clear message without repeated failed scanner requests',async({page})=>{
+ await setup(page);await page.goto('/');
+ await page.getByRole('button',{name:'Market scanner',exact:true}).click();
+ await expect(page.getByRole('button',{name:'TESTUSDT PERPETUAL'})).toBeVisible();
+ const failed=[];page.on('requestfailed',request=>failed.push(request.url()));
+ await page.route('**/api/v1/scanner?*',route=>route.abort('internetdisconnected'));
+ await page.context().setOffline(true);
+ await page.getByLabel('Min. quote volume').fill('1');
+ await expect(page.getByRole('alert')).toContainText('Network throttling to No throttling');
+ const initialFailures=failed.length;
+ await page.getByLabel('Min. quote volume').fill('2');
+ await page.waitForTimeout(500);
+ expect(failed.length).toBe(initialFailures);
+});
+
 test('offline planner draws validated user-supplied LONG and SHORT price maps',async({page})=>{
  await setup(page,{offline:true});await page.goto('/');await page.getByRole('button',{name:'Trade planner',exact:true}).click();
  await page.getByLabel('Entry reference',{exact:true}).fill('100');
