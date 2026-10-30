@@ -2,8 +2,19 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from app.schemas.candles import Timeframe, normalize_symbol
+from app.schemas.candles import Timeframe, normalize_symbol, INTERVAL_MS
 from app.schemas.platform import StrictModel, Finite
+
+SHORT_TERM_CONTEXT: dict[Timeframe, list[Timeframe]] = {
+    "15m": ["1h", "4h"], "30m": ["1h", "4h"], "1h": ["4h"], "4h": ["1d"],
+}
+
+
+def higher_context(timeframe: Timeframe) -> list[Timeframe]:
+    """Primary short-term views use explicit, strictly higher context windows."""
+    if timeframe in SHORT_TERM_CONTEXT:
+        return list(SHORT_TERM_CONTEXT[timeframe])
+    return [tf for tf in INTERVAL_MS if INTERVAL_MS[tf] > INTERVAL_MS[timeframe]][:2]
 
 
 class StudyRules(StrictModel):

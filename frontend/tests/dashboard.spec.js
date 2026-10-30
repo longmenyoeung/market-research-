@@ -43,6 +43,7 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
     return {id:`study-${side}`,side,time:candle.open_time,known_at:candle.close_time,timeframe:'1h',reference,stop:reference-direction*risk,targets:[1,2,3].map(r=>reference+direction*risk*r),rsi:side==='BUY'?55:45,adx:25,relative_volume:1.2,rule:'Synthetic test marker',level_rule:'Synthetic ATR test guide'};
    });
    studyReport.indicator_study={source:'archive',historical:true,as_of:report.candles.at(-1).close_time,current_signal:'NO TRADE',current_reason:'Saved candles are historical; no current direction.',signals,evaluation:{BUY:{trend:true,momentum:true,strength:true,volume:true},SELL:{trend:false,momentum:false,strength:true,volume:true}},evidence_groups:{trend:'EMA alignment',momentum:'RSI and MACD',strength:'ADX',volume:'Relative volume'},rules:request.postDataJSON().rules,limitations:['Synthetic browser fixture; no live data.']};
+   studyReport.multi_timeframe=[{timeframe:'4h',role:'higher',usable:false,historical_available:true,as_of:report.candles.at(-1).close_time,summary:{trend:'bearish',momentum:'bearish'}}];
    studyReport.structure.annotations.push(...signals.map(signal=>({id:signal.id,kind:'study_signal',label:`Past ${signal.side}`,timeframe:'1h',confirmed:true,confirmed_at:signal.known_at,points:[{time:signal.time,price:signal.reference}],rule:signal.rule})));
    return route.fulfill({json:studyReport});
   }
@@ -163,6 +164,7 @@ test('indicator studio draws historical BUY SELL studies and rejects a failed li
  await page.locator('.study-signal-list button').filter({hasText:'Past BUY'}).click();
  await expect(page.locator('.study-reference')).toContainText('Past BUY');
  await expect(page.locator('.study-reference')).toContainText('TP3');
+ await expect(page.getByText('Conflicts with chart trend')).toBeVisible();
  await expect(page.locator('.indicator-workspace > .provider-banner')).toContainText('NO TRADE');
  await page.locator('.chart-wrap').scrollIntoViewIfNeeded();
  await page.screenshot({path:'test-results/historical-indicator-study.png'});
@@ -171,6 +173,43 @@ test('indicator studio draws historical BUY SELL studies and rejects a failed li
  await expect(page.getByRole('alert')).toContainText('Synthetic live provider timeout');
  await expect(page.getByText('HISTORICAL REPLAY - past signals only')).toHaveCount(0);
  expect(errors).toEqual([]);
+});
+
+test('short-term indicator controls synchronize timeframes and discard the previous study',async({page})=>{
+ await setup(page,{saved:true});await page.goto('/#indicator');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByText('HISTORICAL REPLAY - past signals only')).toBeVisible();
+ const controls=page.getByRole('group',{name:'Short-term chart timeframe'});
+ for(const [timeframe,context] of [['15m','1h + 4h'],['30m','1h + 4h'],['1h','4h'],['4h','1d']]){
+  await controls.getByRole('button',{name:timeframe,exact:true}).click();
+  await expect(page.getByLabel('Primary timeframe')).toHaveValue(timeframe);
+  await expect(controls.getByRole('button',{name:timeframe,exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(page.locator('.study-timeframes')).toContainText(`Higher trend context: ${context}`);
+ }
+ await expect(page.getByText('HISTORICAL REPLAY - past signals only')).toHaveCount(0);
+ await controls.getByRole('button',{name:'30m',exact:true}).click();
+ await page.route('**/api/v1/indicator-study',route=>{
+  expect(route.request().postDataJSON().timeframe).toBe('30m');
+  return route.fulfill({status:422,json:{error:{message:'Synthetic missing 30m archive'}}});
+ });
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByRole('alert')).toContainText('Synthetic missing 30m archive');
+});
+
+test('missing 15m history is explicit and does not submit an impossible archive calculation',async({page})=>{
+ await setup(page,{saved:true});let calculations=0;
+ page.on('request',request=>{if(new URL(request.url()).pathname==='/api/v1/indicator-study')calculations++;});
+ await page.route('**/api/v1/history/candles?*',route=>{
+  if(new URL(route.request().url()).searchParams.get('timeframe')==='15m')return route.fulfill({json:{source:'local_archive',live_data:false,candles:[],quality:{status:'empty'}}});
+  return route.fallback();
+ });
+ await page.goto('/#indicator');
+ await page.getByRole('group',{name:'Short-term chart timeframe'}).getByRole('button',{name:'15m',exact:true}).click();
+ await expect(page.getByRole('status')).toContainText('No saved 15m candles');
+ await expect(page.getByRole('button',{name:'Build indicator chart'})).toBeDisabled();
+ await page.getByRole('group',{name:'Short-term chart timeframe'}).getByRole('button',{name:'30m',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Build indicator chart'})).toBeEnabled();
+ expect(calculations).toBe(0);
 });
 
 test('scanner, charts, reports, watchlist and history render without JS errors',async({page})=>{

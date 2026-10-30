@@ -1,13 +1,15 @@
 import asyncio
 import uuid
+import numpy as np
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.adapters.base import MarketDataError
 from app.analysis.indicator_study import build_signals
+from app.analysis.scoring import summarize
 from app.indicators.engine import series_payload, snapshot
-from app.schemas.candles import Candle, CandleQuery
-from app.schemas.indicator_study import IndicatorStudyRequest
+from app.schemas.candles import Candle, CandleQuery, INTERVAL_MS
+from app.schemas.indicator_study import IndicatorStudyRequest, higher_context
 from app.schemas.platform import AnalysisRequest, IndicatorSettings
 
 if TYPE_CHECKING:
@@ -18,11 +20,13 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
     now = datetime.now(UTC)
     now_ms = int(now.timestamp()*1000)
     preferences = platform.preferences.model_copy(deep=True)
+    higher_timeframes = higher_context(request.timeframe)
     base = None
     if request.source == "live":
         # Current BUY/SELL eligibility always comes from the complete engine,
         # including fresh quotes, higher context, costs and data-quality checks.
-        base = await platform.report(AnalysisRequest(symbol=request.symbol, timeframe=request.timeframe))
+        base = await platform.report(AnalysisRequest(symbol=request.symbol, timeframe=request.timeframe,
+                                                    higher_timeframes=higher_timeframes))
         candles = [Candle.model_validate(value) for value in base["candles"]]
         quality = base["market_overview"]["quality"]
         config = IndicatorSettings.model_validate(base["parameters"]["indicators"])
@@ -39,6 +43,26 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
     async with platform.analysis_slots:
         df, catalog, structure = await platform._calculations(request.symbol, request.timeframe, candles, config)
         study = await asyncio.to_thread(build_signals, df, request.timeframe, config, request.rules)
+        contexts = []
+        if request.source == "archive":
+            for timeframe in higher_timeframes:
+                context = {"timeframe": timeframe, "role": "higher", "usable": False,
+                           "historical_available": False, "summary": {"trend": "unknown"}}
+                try:
+                    saved = await platform.market.archive(CandleQuery(symbol=request.symbol, timeframe=timeframe, limit=1200))
+                    # Higher bars must have closed by the selected window's as-of
+                    # time. Later archived candles cannot confirm an earlier view.
+                    context_candles = [c for c in saved.candles if c.is_closed and c.close_time <= candles[-1].close_time]
+                    times = [c.open_time for c in context_candles]
+                    if len(times) < minimum or not np.all(np.diff(times) == INTERVAL_MS[timeframe]):
+                        context["error"] = "Insufficient continuous confirmed candles at this study time."
+                    else:
+                        other, _, other_shape = await platform._calculations(request.symbol, timeframe, context_candles, config)
+                        context.update(historical_available=True, as_of=context_candles[-1].close_time,
+                                       summary=summarize(other, other_shape, preferences))
+                except MarketDataError as exc:
+                    context["error"] = exc.message
+                contexts.append(context)
     if base is None:
         base = {
             "symbol": request.symbol, "timeframe": request.timeframe,
@@ -46,6 +70,7 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
             "market_overview": {"quality": {**quality, "status": "historical"}},
             "parameters": preferences.model_dump(), "manual_only": True,
             "assessment": {"classification": "NO TRADE", "long_score": None, "short_score": None, "scenarios": {}},
+            "multi_timeframe": contexts,
         }
     current_time = int(datetime.now(UTC).timestamp()*1000)
     usable = request.source == "live" and current_time <= base["valid_until_ms"] and base["market_overview"]["quality"]["status"] == "usable"
@@ -60,6 +85,9 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
             structure["annotations"] = [annotation for annotation in structure["annotations"] if annotation["kind"] != "plan"]
     study.update(
         source=request.source, historical=request.source == "archive",
+        timeframe_plan={"primary": request.timeframe, "higher_timeframes": higher_timeframes,
+                        "historical_markers_include_higher_context": False,
+                        "live_alignment_required": base["parameters"]["require_higher_alignment"]},
         as_of=candles[-1].close_time,
         current_signal={"LONG candidate": "BUY candidate", "SHORT candidate": "SELL candidate"}.get(classification, classification),
         current_reason=(base["assessment"].get("final_assessment", "Review all live report conditions before a manual decision.") if usable else

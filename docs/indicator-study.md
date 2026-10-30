@@ -24,6 +24,32 @@ trade counts, a backtest, a win rate or a probability.
 
 ## Deterministic marker rule
 
+The indicator page has quick chart controls for 15m, 30m, 1h and 4h. Its live
+report uses the following explicit higher-context plan:
+
+| Chart timeframe | Higher trend context |
+| --- | --- |
+| 15m | 1h and 4h |
+| 30m | 1h and 4h |
+| 1h | 4h |
+| 4h | 1d for broader context |
+
+The timeframe change clears the previous study before rebuilding. The global
+indicator periods and thresholds remain configurable experimental rules; the
+timeframe controls do not imply profitable short-term parameters.
+
+The higher-context cards show trend, momentum, missing data and directional
+conflicts with the chart trend. Archived context is calculated only from bars
+that closed at or before the selected window's last confirmed candle. It stays
+historical (`usable=false`) even when available. Historical arrow conditions
+still use only the chart timeframe. Live higher alignment follows the existing
+`require_higher_alignment` preference and the full report's data-quality gates.
+An unavailable 15m archive is never manufactured from 30m or 1h bars.
+The page checks whether the selected archive contains any candles before
+enabling its build action. If empty, it explains the required download without
+submitting a calculation. The API separately validates sufficient warm-up and
+continuous history when building a study.
+
 At a confirmed candle's close, require every condition below. Periods use the
 dashboard's indicator settings; defaults are shown here.
 

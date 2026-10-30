@@ -69,6 +69,10 @@ structure drawings. Select a past marker to draw its hypothetical close
 reference, ATR stop and 1R/2R/3R targets. Saved-candle studies work during the
 provider outage and are always historical. Live mode requires the full current
 analysis checks. See [the rule and timing documentation](docs/indicator-study.md).
+Quick controls cover 15m, 30m, 1h and 4h. The 15m/30m studies use 1h and 4h
+higher trend context; 1h uses 4h, and 4h uses daily context. Missing or conflicting
+context is displayed explicitly. Each archive timeframe needs its own sufficient
+confirmed candle history.
 
 1. Open Overview. Discovery populates the full eligible universe and an initial scan runs in the background. Provider failures appear explicitly; no demonstration data replaces live data.
 2. Open Market scanner. All eligible markets remain visible by default, including low-volume, wide-spread and volatile pairs. Set filters explicitly and inspect freshness before selecting a market.

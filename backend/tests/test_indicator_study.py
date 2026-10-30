@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 from app.adapters.base import MarketDataError
 from app.analysis.indicator_study import build_signals
 from app.main import create_app
-from app.schemas.candles import CandleQuery
-from app.schemas.indicator_study import StudyRules
+from app.schemas.candles import CandleQuery, INTERVAL_MS
+from app.schemas.indicator_study import StudyRules, higher_context
 from app.schemas.platform import IndicatorSettings
 from test_research import ResearchProvider
 
@@ -109,3 +109,45 @@ def test_live_study_with_stale_candles_has_no_current_candidate_or_trade_levels(
         assert result["assessment"]["classification"] == "NO TRADE"
         assert all(scenario["entry"] is None for scenario in result["assessment"]["scenarios"].values())
         assert not any(annotation["kind"] == "plan" for annotation in result["structure"]["annotations"])
+
+
+@pytest.mark.parametrize("timeframe,expected", [("15m", ["1h", "4h"]), ("30m", ["1h", "4h"]),
+                                               ("1h", ["4h"]), ("4h", ["1d"])])
+def test_short_term_context_is_explicit_and_strictly_higher(timeframe, expected):
+    assert higher_context(timeframe) == expected
+    assert all(INTERVAL_MS[context] > INTERVAL_MS[timeframe] for context in expected)
+
+
+def test_live_15m_study_uses_1h_and_4h_confirmation(settings):
+    with TestClient(create_app(settings, provider=ResearchProvider())) as client:
+        response = client.post("/api/v1/indicator-study", json={"symbol": "TESTUSDT", "timeframe": "15m", "source": "live"})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["indicator_study"]["timeframe_plan"]["higher_timeframes"] == ["1h", "4h"]
+        assert [context["timeframe"] for context in result["multi_timeframe"] if context["role"] == "higher"] == ["1h", "4h"]
+
+
+def test_archive_context_does_not_use_candles_after_primary_study_time(settings):
+    class NoNetwork(ResearchProvider):
+        async def discover_contracts(self):
+            raise AssertionError("Archive context cannot use live discovery")
+        async def fetch_candles(self, query):
+            raise AssertionError("Archive context cannot use live prices")
+    app = create_app(settings, provider=NoNetwork())
+    with TestClient(app) as client:
+        fixture = ResearchProvider()
+        primary = client.portal.call(fixture.fetch_candles, CandleQuery(symbol="TESTUSDT", timeframe="30m", limit=400))
+        old_primary = [c.model_copy(update={"open_time": c.open_time-10*3600000, "close_time": c.close_time-10*3600000}) for c in primary.candles]
+        client.portal.call(app.state.platform.store.save, "TESTUSDT", "30m", old_primary)
+        for tf in ("1h", "4h"):
+            later = client.portal.call(fixture.fetch_candles, CandleQuery(symbol="TESTUSDT", timeframe=tf, limit=400))
+            client.portal.call(app.state.platform.store.save, "TESTUSDT", tf, later.candles)
+        response = client.post("/api/v1/indicator-study", json={"symbol": "TESTUSDT", "timeframe": "30m"})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["indicator_study"]["current_signal"] == "NO TRADE"
+        assert result["indicator_study"]["timeframe_plan"]["historical_markers_include_higher_context"] is False
+        assert len(result["multi_timeframe"]) == 2
+        for context in result["multi_timeframe"]:
+            assert context["historical_available"] is True and context["usable"] is False
+            assert context["as_of"] <= result["indicator_study"]["as_of"]

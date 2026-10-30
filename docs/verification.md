@@ -1,5 +1,33 @@
 # Verification record
 
+## Short-term timeframe workflow - 2026-10-31 (Asia/Bangkok)
+
+Added synchronized 15m, 30m, 1h and 4h controls to the indicator page. Its live
+study uses explicit higher-context plans: 15m/30m use 1h+4h, 1h uses 4h, and
+4h uses daily context. Archived context is calculated only from higher bars
+closed by the primary study's timestamp. Historical context remains distinct
+from the single-timeframe past marker rule and is never current eligibility.
+Conflicting and missing higher trends remain visible.
+
+| Check | Observed result |
+| --- | --- |
+| Full backend suite | 238 passed, 1 non-failing Starlette TestClient warning |
+| Frontend unit suite | 16 passed |
+| Browser suite | 18 passed |
+| Production build | Passed |
+| Actual BTCUSDT 30m study | 200; 399 confirmed candles; historical 1h and 4h context available, both clipped to the primary as-of time |
+| Actual BTCUSDT 1h and 4h studies | 200; 399 confirmed candles in each window |
+| Actual BTCUSDT 15m archive | Empty; UI displays the missing-data explanation and disables archive calculation |
+| Actual browser errors | Zero JavaScript errors and zero HTTP error responses |
+| Actual mobile width | 390-pixel body at a 390-pixel viewport |
+
+Regression coverage verifies context plans, live report timeframe roles,
+timestamp alignment without later-bar leakage, visible disagreements,
+timeframe synchronization, clearing obsolete studies, and avoiding submission
+when a selected archive is empty. The running backend and built frontend were
+updated. No 15m prices were synthesized from larger candles, and this work does
+not establish a functioning live data feed or profitable short-term settings.
+
 ## BUY / SELL indicator study - 2026-10-31 (Asia/Bangkok)
 
 Added a separate indicator page and validated local study endpoint. Historical
