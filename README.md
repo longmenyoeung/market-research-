@@ -6,6 +6,9 @@ A local Python/FastAPI + React platform for researching USDT perpetual futures b
 
 The [Men Crypto Signal Pro comparison](docs/prompt-comparison.md) records which
 requirements are implemented, which differ, and which remain unfinished.
+The [Men Crypto profile guide](docs/men-crypto-profile.md) explains the shared
+VWAP/higher-timeframe rules, strategy handoff, hypothetical tracker, configurable
+simulated exposure and stop adjustments, and confirmed dashboard-only alerts.
 
 ## Quick start (PowerShell)
 
@@ -169,6 +172,6 @@ Backend calculations remain independent of React. `MarketDataProvider` and the s
 - Optional missing metrics remain unavailable. Aggregate open interest provides contextual narration with no score weight; stale, sparse, malformed or insufficient history creates no inference. True volume profile is unavailable without trade-at-price data.
 - The report risk illustration uses $1,000 hypothetical equity and 1x leverage. Its reference prices and projections are not exchange-ready instructions; use the planner to apply contract constraints. Targets are 1R/2R/3R projections. There is no maintenance-tier or liquidation-price model.
 - Backtests model fees, spread and slippage. Historical mode fetches validated public funding events with their settlement mark prices; scenario mode uses an explicit hypothetical rate and never masquerades as observed history. The evidence strategy reuses the live assessor with historical clocks, confirmed pivots and close-time-aligned contexts. Liquidations are not modeled and profitability is never claimed. Current-contract selection introduces possible survivorship bias.
-- The dashboard is intended for one local operator. Optional `MCA_API_KEY` authentication protects every API/WebSocket route and has a memory-only browser unlock screen, request throttling, body/host limits and security headers. It is not a production identity service; public hosting still needs a specified TLS/identity architecture. No Git remote is configured, so GitHub Actions has not run remotely.
+- The dashboard is intended for one local operator. Optional `MCA_API_KEY` authentication protects every API/WebSocket route and has a memory-only browser unlock screen, request throttling, body/host limits and security headers. It is not a production identity service; public hosting still needs a specified TLS/identity architecture. A GitHub remote is configured; local test results do not certify remote CI or deployment.
 
 Read [API contracts](docs/api-contracts.md), [architecture](docs/architecture.md), [indicator formulas](docs/indicators.md), [drawing rules](docs/drawing-rules.md), [backtesting methods](docs/backtesting.md), [safety policy](docs/safety-policy.md), [Cambodia eligibility boundary](docs/eligibility.md) and [deployment](docs/deployment.md).

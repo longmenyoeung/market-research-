@@ -4,11 +4,13 @@ import {Empty} from './Common.jsx';
 import {price} from '../api.js';
 import {selectPlanOverlays} from '../planOverlay.js';
 import {studyDrawings} from '../studyDrawings.js';
+import {chartPriceFormat} from '../chartPrecision.js';
 import './MarketChartPlan.css';
 
 const palette=['#58d8ae','#e6b66a','#8c9eff','#53b9dc','#ce82d9','#ed8d87'];
 export default function MarketChart({report,liveCandle,studySignalId}) {
   const host=useRef(null), svg=useRef(null), chartRef=useRef(null), [overlays,setOverlays]=useState(['ema_20','ema_50','ema_200','bb_upper','bb_lower','vwap']);
+  const viewport=useRef(null);
   const [groups,setGroups]=useState(['swing','structure','zone','trendline','fvg','previous_period']),[planMode,setPlanMode]=useState('both');
   const isStudy=Boolean(report?.indicator_study);
   const studyLines=studyDrawings(report,studySignalId);
@@ -17,19 +19,21 @@ export default function MarketChart({report,liveCandle,studySignalId}) {
   const toggle=(setter,current,name)=>setter(current.includes(name)?current.filter(v=>v!==name):[...current,name]);
   useEffect(()=>{
     if(!host.current||!report?.candles?.length) return;
+    const marketKey=`${report.symbol}:${report.timeframe}`;
+    const priceFormat=chartPriceFormat(report.candles,report.market_overview?.constraints?.tick_size);
     const chart=createChart(host.current,{autoSize:true,height:760,layout:{background:{color:'#101820'},textColor:'#8e9da9',fontFamily:'Inter, system-ui, sans-serif',fontSize:11,attributionLogo:true},grid:{vertLines:{color:'#1b2630'},horzLines:{color:'#1b2630'}},rightPriceScale:{borderColor:'#28343f'},timeScale:{borderColor:'#28343f',timeVisible:true},crosshair:{mode:0}});
     const planPrices=[...(isStudy?[]:plans.annotations),...studyLines].flatMap(a=>a.points.map(point=>point.price));
-    const candles=chart.addSeries(CandlestickSeries,{upColor:'#53cfa4',downColor:'#e87878',borderVisible:false,wickUpColor:'#53cfa4',wickDownColor:'#e87878',
+    const candles=chart.addSeries(CandlestickSeries,{priceFormat,upColor:'#53cfa4',downColor:'#e87878',borderVisible:false,wickUpColor:'#53cfa4',wickDownColor:'#e87878',
       autoscaleInfoProvider:original=>{const info=original();if(info&&planPrices.length){info.priceRange.minValue=Math.min(info.priceRange.minValue,...planPrices);info.priceRange.maxValue=Math.max(info.priceRange.maxValue,...planPrices);}return info;}});
     candles.setData(report.candles.map(c=>({time:c.open_time/1000,open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close)})));
-    overlays.forEach((name,i)=>{if(report.series?.[name]?.length){const s=chart.addSeries(LineSeries,{color:palette[i%palette.length],lineWidth:1,title:name,priceLineVisible:false,lastValueVisible:false});s.setData(report.series[name]);}});
+    overlays.forEach((name,i)=>{if(report.series?.[name]?.length){const s=chart.addSeries(LineSeries,{priceFormat,color:palette[i%palette.length],lineWidth:1,title:name,priceLineVisible:false,lastValueVisible:false});s.setData(report.series[name]);}});
     const volume=chart.addSeries(HistogramSeries,{color:'#365b57',priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false},1);
     volume.setData(report.candles.map(c=>({time:c.open_time/1000,value:Number(c.volume),color:Number(c.close)>=Number(c.open)?'#245d50':'#663c44'})));
     const rsiName=Object.keys(report.series||{}).find(k=>k===`rsi_${report.parameters?.indicators?.momentum_period}`)||'rsi_14';
     for(const [name,pane,color] of [[rsiName,2,'#b09bdd'],['macd',3,'#69c2ef'],['macd_signal',3,'#e6b66a'],['atr',4,'#71ceac']]){
-      if(report.series?.[name]?.length){const s=chart.addSeries(LineSeries,{color,lineWidth:1,title:name,priceLineVisible:false,lastValueVisible:false},pane);s.setData(report.series[name]);if(pane===2){[30,70].forEach(price=>s.createPriceLine({price,color:'#495365',lineWidth:1,lineStyle:2,axisLabelVisible:false,title:String(price)}));}}
+      if(report.series?.[name]?.length){const s=chart.addSeries(LineSeries,{priceFormat:pane===2?{type:'price',precision:2,minMove:0.01}:priceFormat,color,lineWidth:1,title:name,priceLineVisible:false,lastValueVisible:false},pane);s.setData(report.series[name]);if(pane===2){[30,70].forEach(price=>s.createPriceLine({price,color:'#495365',lineWidth:1,lineStyle:2,axisLabelVisible:false,title:String(price)}));}}
     }
-    if(report.series?.macd_hist?.length){const s=chart.addSeries(HistogramSeries,{priceLineVisible:false,lastValueVisible:false},3);s.setData(report.series.macd_hist.map(d=>({...d,color:d.value>=0?'#286252':'#663b43'})));}
+    if(report.series?.macd_hist?.length){const s=chart.addSeries(HistogramSeries,{priceFormat,priceLineVisible:false,lastValueVisible:false},3);s.setData(report.series.macd_hist.map(d=>({...d,color:d.value>=0?'#286252':'#663b43'})));}
     chart.panes().forEach((pane,i)=>pane.setStretchFactor(i===0?4.4:i===1?0.7:1));
     const annotations=[...(report.structure?.annotations||[]).filter(a=>a.kind!=='plan'&&(a.kind==='study_signal'||groups.includes(a.kind))),...(isStudy?[]:plans.annotations),...studyLines];
     const marks=annotations.filter(a=>['swing','pattern','sweep','study_signal'].includes(a.kind)&&a.points?.length).map(a=>({time:a.points[0].time/1000,position:a.kind==='study_signal'?(a.label.includes('BUY')?'belowBar':'aboveBar'):a.label.includes('H')?'aboveBar':'belowBar',shape:a.kind==='study_signal'?(a.label.includes('BUY')?'arrowUp':'arrowDown'):'circle',size:a.kind==='study_signal'?1:0.5,color:a.kind==='study_signal'?(a.label.includes('BUY')?'#58d8ae':'#e87878'):a.confirmed?'#a6b8c5':'#e6b66a',text:a.label})).sort((a,b)=>a.time-b.time);
@@ -63,12 +67,14 @@ export default function MarketChart({report,liveCandle,studySignalId}) {
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(renderAnnotations);chart.subscribeCrosshairMove(renderAnnotations);
     host.current.addEventListener('wheel',renderAnnotations);host.current.addEventListener('pointerup',renderAnnotations);
-    chart.timeScale().fitContent();renderAnnotations();
+    if(viewport.current?.key===marketKey&&viewport.current.range)chart.timeScale().setVisibleRange(viewport.current.range);
+    else chart.timeScale().fitContent();
+    renderAnnotations();
     chartRef.current={chart,candles,volume,lastTime:report.candles.at(-1).open_time/1000,renderAnnotations};
     const currentHost=host.current;
-    return()=>{cancelAnimationFrame(raf);currentHost.removeEventListener('wheel',renderAnnotations);currentHost.removeEventListener('pointerup',renderAnnotations);markers.detach();chart.remove();chartRef.current=null;};
+    return()=>{viewport.current={key:marketKey,range:chart.timeScale().getVisibleRange()};cancelAnimationFrame(raf);currentHost.removeEventListener('wheel',renderAnnotations);currentHost.removeEventListener('pointerup',renderAnnotations);markers.detach();chart.remove();chartRef.current=null;};
   },[report?.id,overlays.join(','),groups.join(','),plans.visibleSides.join(','),studySignalId]);
-  useEffect(()=>{const instance=chartRef.current;if(instance&&liveCandle){const time=liveCandle.open_time/1000;if(time>=instance.lastTime){instance.candles.update({time,open:+liveCandle.open,high:+liveCandle.high,low:+liveCandle.low,close:+liveCandle.close});instance.volume.update({time,value:+liveCandle.volume,color:+liveCandle.close>=+liveCandle.open?'#245d50':'#663c44'});instance.lastTime=time;instance.renderAnnotations();}}},[liveCandle]);
+  useEffect(()=>{const instance=chartRef.current;if(instance&&liveCandle){const time=liveCandle.open_time/1000;if(time>=instance.lastTime){instance.candles.update({time,open:+liveCandle.open,high:+liveCandle.high,low:+liveCandle.low,close:+liveCandle.close});instance.volume.update({time,value:+liveCandle.volume,color:+liveCandle.close>=+liveCandle.open?'#245d50':'#663c44'});instance.lastTime=time;instance.renderAnnotations();}}},[liveCandle,report?.id,overlays.join(','),groups.join(','),plans.visibleSides.join(','),studySignalId]);
   if(!report?.candles?.length)return <Empty title="Select a contract for chart analysis">A successful analysis loads actual candles, indicator panels and deterministic annotations.</Empty>;
   return <>
    {report.source==='local_archive'?<p className="muted">Historical candlesticks and volume only. Indicators and automatic drawings require a fresh analysis.</p>:<div className="chart-controls"><details><summary>Indicator overlays ({overlays.length})</summary><div className="check-grid">{seriesNames.map(name=><label key={name}><input type="checkbox" checked={overlays.includes(name)} onChange={()=>toggle(setOverlays,overlays,name)}/>{name}</label>)}</div></details><details><summary>Automatic drawings ({groups.length})</summary><div className="check-grid">{['swing','structure','zone','trendline','sweep','retest','fvg','fibonacci','previous_period','channel','divergence','pattern'].map(name=><label key={name}><input type="checkbox" checked={groups.includes(name)} onChange={()=>toggle(setGroups,groups,name)}/>{name}</label>)}</div></details><small>Price · Volume · RSI · MACD · ATR</small></div>}

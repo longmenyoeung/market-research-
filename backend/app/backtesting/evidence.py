@@ -84,6 +84,9 @@ class StructureReplay:
 
 
 def context_timeframes(config) -> list[tuple[str,str]]:
+    if config.strategy == 'indicator':
+        from app.schemas.indicator_study import higher_context
+        return [(tf,'higher') for tf in (config.higher_timeframes or higher_context(config.timeframe))] if config.signal_profile == 'men_crypto' else []
     if config.strategy != 'evidence':
         return []
     higher = config.higher_timeframes or [tf for tf in INTERVAL_MS if INTERVAL_MS[tf]>INTERVAL_MS[config.timeframe]][:2]

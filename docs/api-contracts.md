@@ -143,6 +143,13 @@ probability or order instruction.
 The companion `POST /api/v1/indicator-study` builds confirmed-candle marker
 studies and chart drawings. See [indicator-study.md](indicator-study.md) for its
 validated source/rule inputs, historical timing and current-data gates.
+Inputs additionally support `profile` (`experimental` or `men_crypto`), explicit
+strictly higher `higher_timeframes`, `simulation` options and `dashboard_alerts`.
+The response includes a hypothetical `paper_tracker`; it is not account state.
+Backtest requests now support `strategy=indicator`, `signal_profile`,
+`study_rules`, `data_source` (`live` or `archive`), `max_exposure_percent`,
+`break_even`, `break_even_at_r`, `trailing_stop`, `trailing_atr` and
+`trailing_activation_r`. Archive backtests require scenario funding explicitly.
 
 Body: `symbol`, `timeframe`, up to three `higher_timeframes`, optional
 `lower_timeframe`, `include_derivatives`. Returns the report and persists an

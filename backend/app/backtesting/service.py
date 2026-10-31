@@ -36,7 +36,7 @@ class BacktestService:
     async def _run(self, key: str, request: BacktestRequest) -> None:
         job=self.jobs[key]
         try:
-            candles = await self._load_candles(request.symbol,request.timeframe,request.start_time,request.end_time,job)
+            candles = await self._load_candles(request.symbol,request.timeframe,request.start_time,request.end_time,job,request.data_source)
             if not candles: raise ValueError("No historical closed candles available.")
             interval=INTERVAL_MS[request.timeframe]
             aligned_start=((request.start_time+interval-1)//interval)*interval
@@ -51,7 +51,7 @@ class BacktestService:
                 # candles from the future of the primary validation interval.
                 history_start=max(0,(request.start_time//duration-700)*duration)
                 job["context_loading"] = {"timeframe":timeframe,"role":role}
-                context_candles=await self._load_candles(request.symbol,timeframe,history_start,request.end_time)
+                context_candles=await self._load_candles(request.symbol,timeframe,history_start,request.end_time,source=request.data_source)
                 contexts[timeframe]=frame(context_candles)
             funding = None
             if request.funding_mode == "historical":
@@ -60,7 +60,8 @@ class BacktestService:
                 job["funding_events_loaded"]=len(funding)
             job["status"]="calculating"
             result=await asyncio.to_thread(run_validation,frame(candles),request,contexts,funding,self.cancel_events[key])
-            result["data_note"]="Current eligible contracts only: survivorship bias is possible. Historical quotes are modeled assumptions; funding source is explicitly disclosed."
+            result["data_note"]=("Saved candle archive only; current contract eligibility is unverified. " if request.data_source=="archive" else "Current eligible contracts only: survivorship bias is possible. ")+"Historical quotes are modeled assumptions; funding source is explicitly disclosed."
+            result["candle_source"] = request.data_source
             result["context_sources"]={tf:{"bars":len(data),"first_time":int(data.time.iloc[0]) if len(data) else None,"last_time":int(data.time.iloc[-1]) if len(data) else None} for tf,data in contexts.items()}
             result["funding_source"]={"mode":request.funding_mode,"event_count":len(funding) if funding is not None else None,
                 "start_time":request.start_time,"end_time":request.end_time,"provider":"binance_usdm" if funding is not None else None}
@@ -77,13 +78,14 @@ class BacktestService:
         finally:
             await self.store.put("backtest_runs",key,{k:v for k,v in job.items() if k!="result"},request.symbol,request.timeframe)
 
-    async def _load_candles(self,symbol,timeframe,start_time,end_time,job=None):
+    async def _load_candles(self,symbol,timeframe,start_time,end_time,job=None,source="live"):
         duration=INTERVAL_MS[timeframe]
         if (end_time-start_time)//duration>20000:
             raise ValueError(f"{timeframe} context exceeds 20,000 bars; shorten the range or choose a closer context timeframe.")
         candles=[]; cursor=start_time
         while cursor<=end_time:
-            page=await self.market.get_candles(CandleQuery(symbol=symbol,timeframe=timeframe,start_time=cursor,end_time=end_time,limit=1500))
+            query=CandleQuery(symbol=symbol,timeframe=timeframe,start_time=cursor,end_time=end_time,limit=1500)
+            page=await self.market.archive(query) if source=="archive" else await self.market.get_candles(query)
             batch=[c for c in page.candles if c.is_closed and c.close_time<=end_time]
             if not batch: break
             if batch[0].open_time<cursor: raise ValueError("Historical page moved backwards.")

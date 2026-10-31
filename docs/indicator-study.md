@@ -3,6 +3,11 @@
 Open **BUY / SELL indicator** in the dashboard. Select a contract, timeframe,
 source and rule thresholds, then select **Build indicator chart**. The settings
 are experimental and have not demonstrated profitability.
+The default UI profile is now **Men Crypto Signal Pro**, with VWAP and causal
+higher confirmation. The original **Experimental EMA20/50/200** profile remains
+available; the API's default retains it for compatibility. See
+[the Men Crypto profile guide](men-crypto-profile.md) for the new rule,
+shared strategy simulator, hypothetical tracker and dashboard alerts.
 
 ## Sources and current eligibility
 
@@ -17,8 +22,9 @@ are experimental and have not demonstrated profitability.
   substitution. The view is a snapshot that must be refreshed manually; its
   current direction expires with the report's `valid_until_ms`.
 
-The historical marker rule is a single-timeframe study, separate from full
-current candidate eligibility. Past markers do not include contemporaneous
+The original experimental marker rule is single-timeframe; the Men Crypto
+profile additionally requires historical higher-timeframe agreement. Both are
+separate from full current candidate eligibility. Past markers do not include contemporaneous
 spread, fees, funding, or higher-timeframe confirmation. Their counts are not
 trade counts, a backtest, a win rate or a probability.
 
@@ -41,8 +47,9 @@ timeframe controls do not imply profitable short-term parameters.
 The higher-context cards show trend, momentum, missing data and directional
 conflicts with the chart trend. Archived context is calculated only from bars
 that closed at or before the selected window's last confirmed candle. It stays
-historical (`usable=false`) even when available. Historical arrow conditions
-still use only the chart timeframe. Live higher alignment follows the existing
+historical (`usable=false`) even when available. Experimental arrows use only
+the chart timeframe; Men Crypto arrows join closed higher candles at each past
+signal timestamp. Live higher alignment follows the existing
 `require_higher_alignment` preference and the full report's data-quality gates.
 An unavailable 15m archive is never manufactured from 30m or 1h bars.
 The page checks whether the selected archive contains any candles before
@@ -52,6 +59,8 @@ continuous history when building a study.
 
 At a confirmed candle's close, require every condition below. Periods use the
 dashboard's indicator settings; defaults are shown here.
+This table describes the legacy experimental profile. The Men Crypto profile
+replaces its trend rule with EMA50/200 plus VWAP and adds required higher trend.
 
 | Condition | Past BUY | Past SELL |
 | --- | --- | --- |
@@ -96,6 +105,24 @@ volume by its configured rolling mean. See [indicators.md](indicators.md).
   describe the latest closed study window. Selecting an older marker changes
   its reference levels; it does not rewind the other structure drawings.
   Pivot confirmation times and provisional observations remain explicit.
+
+## Chart updates
+
+Saved-candle studies are historical and their prices do not move. Select the
+live source and build a successful current report to enable selected-market
+WebSocket candle updates. Open candles, volume and the last-trade price line
+update as actual data arrives. REST snapshots provide a 15-second fallback;
+access restrictions are respected. The chart displays its source, timeframe,
+last received price, receipt time and stale/connection status.
+
+Indicators, confirmed markers and structure refresh after candle closes,
+resynchronization and every 60 seconds; no provisional candle creates a confirmed
+BUY/SELL signal. Missing or stale data suppresses current directional eligibility.
+Switching contract/timeframe automatically reloads a previously built study when
+the selected source has sufficient data. Past reference, stop and target lines
+remain fixed to their historical setup. Live price movement does not move them.
+Chart labels use observed candle precision rather than rounding small coins to
+0.01. Display precision is not an exchange order constraint.
 
 ## API
 

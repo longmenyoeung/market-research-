@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
 const fixture=JSON.parse(fs.readFileSync(new URL('./report.fixture.json',import.meta.url),'utf8'));
 
-async function setup(page,{offline=false,saved=false,keyRequired=false,restQuality='usable',planning=false}={}){
+async function setup(page,{offline=false,saved=false,keyRequired=false,restQuality='usable',planning=false,liveStudy=false}={}){
  const report=structuredClone(fixture);report.generated_at=new Date().toISOString();report.valid_until_ms=Date.now()+60000;
  if(planning){
   report.market_overview.quality.status='usable';report.assessment.classification='WAIT';
@@ -36,7 +36,7 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
   if(path==='/api/v1/scanner')return route.fulfill({json:offline?{status:'error',error:'access_restricted',message:'Provider access unavailable in this test',rows:[],total:0,processed:0,overview:{eligible:0}}:{status:saved?'cached':'complete',timeframe:'1h',message:saved?'Saved discovery; all data is stale.':undefined,total:1,processed:1,displayed:1,rows:[saved?{...row,quality:'stale',classification:'NO TRADE',long_score:null,short_score:null}:row],overview:{eligible:1,usable:saved?0:1,liquidity_warnings:0,long_candidates:0,short_candidates:0,mean_atr_percent:1.5}}});
   if(path==='/api/v1/analysis')return route.fulfill({json:report});
   if(path==='/api/v1/indicator-study'){
-   if(request.postDataJSON().source==='live')return route.fulfill({status:504,json:{error:{message:'Synthetic live provider timeout'}}});
+   if(request.postDataJSON().source==='live'&&!liveStudy)return route.fulfill({status:504,json:{error:{message:'Synthetic live provider timeout'}}});
    const studyReport=structuredClone(report);
    const signals=['BUY','SELL'].map((side,index)=>{
     const candle=report.candles.at(index===0?-40:-20),reference=Number(candle.close),risk=2,direction=side==='BUY'?1:-1;
@@ -44,6 +44,9 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
    });
    studyReport.indicator_study={source:'archive',historical:true,as_of:report.candles.at(-1).close_time,current_signal:'NO TRADE',current_reason:'Saved candles are historical; no current direction.',signals,evaluation:{BUY:{trend:true,momentum:true,strength:true,volume:true},SELL:{trend:false,momentum:false,strength:true,volume:true}},evidence_groups:{trend:'EMA alignment',momentum:'RSI and MACD',strength:'ADX',volume:'Relative volume'},rules:request.postDataJSON().rules,limitations:['Synthetic browser fixture; no live data.']};
    studyReport.multi_timeframe=[{timeframe:'4h',role:'higher',usable:false,historical_available:true,as_of:report.candles.at(-1).close_time,summary:{trend:'bearish',momentum:'bearish'}}];
+   studyReport.indicator_study.profile=request.postDataJSON().profile;
+   if(liveStudy&&request.postDataJSON().source==='live')Object.assign(studyReport.indicator_study,{source:'live',historical:false,current_reason:'Synthetic live study for browser testing only.'});
+   studyReport.paper_tracker={hypothetical_only:true,open_position:null,metrics:{trades:2,net_pnl:3},events:[{kind:'virtual_tp',known_at:report.candles.at(-1).close_time,side:'LONG',price:110}]};
    studyReport.structure.annotations.push(...signals.map(signal=>({id:signal.id,kind:'study_signal',label:`Past ${signal.side}`,timeframe:'1h',confirmed:true,confirmed_at:signal.known_at,points:[{time:signal.time,price:signal.reference}],rule:signal.rule})));
    return route.fulfill({json:studyReport});
   }
@@ -210,6 +213,96 @@ test('missing 15m history is explicit and does not submit an impossible archive 
  await page.getByRole('group',{name:'Short-term chart timeframe'}).getByRole('button',{name:'30m',exact:true}).click();
  await expect(page.getByRole('button',{name:'Build indicator chart'})).toBeEnabled();
  expect(calculations).toBe(0);
+});
+
+test('live indicator updates prices, refreshes closed-bar analysis and unsubscribes on timeframe change',async({page})=>{
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await setup(page,{liveStudy:true});
+ await page.route('**/api/v1/candles?*',route=>route.fulfill({json:{symbol:'TESTUSDT',timeframe:'1h',quality:{status:'stale'},candles:[]}}));
+ let stream,requests=0;const closedStreams=[];
+ page.on('request',request=>{if(new URL(request.url()).pathname==='/api/v1/indicator-study')requests++;});
+ await page.routeWebSocket('**/api/v1/ws/**',socket=>{stream=socket;socket.onClose(()=>closedStreams.push(socket.url()));});
+ await page.goto('/#indicator');
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByText('LIVE STUDY - automatic candle updates')).toBeVisible();
+ await expect.poll(()=>Boolean(stream)).toBe(true);
+ const openTime=Math.floor(Date.now()/3600000)*3600000;
+ const candle={...fixture.candles.at(-1),open_time:openTime,close_time:openTime+3599999,open:'120',high:'125',low:'118',close:'121',is_closed:false};
+ const send=(changes={},extra={})=>stream.send(JSON.stringify({type:'candle',symbol:'TESTUSDT',timeframe:'1h',event_time:Date.now(),stale:false,candle:{...candle,...changes},...extra}));
+ const beforeClose=requests;
+ send({open_time:openTime-3600000,close_time:openTime-1,is_closed:true});
+ await expect.poll(()=>requests).toBeGreaterThan(beforeClose);
+ send();
+ await expect(page.getByTestId('chart-last-price')).toHaveText('121');
+ await expect(page.getByLabel('Chart market status')).toContainText('streaming');
+ await page.waitForTimeout(10);send({close:'123'});
+ await expect(page.getByTestId('chart-last-price')).toHaveText('123');
+ // Stale and out-of-order data cannot replace the last received price.
+ send({close:'119'},{stale:true,event_time:Date.now()+1});
+ await expect(page.getByLabel('Chart market status')).toContainText('stream stale');
+ await expect(page.getByTestId('chart-last-price')).toHaveText('123');
+ await page.waitForTimeout(10);send({close:'124'});
+ await expect(page.getByTestId('chart-last-price')).toHaveText('124');
+ const before=requests;
+ // Gap/resync metadata must refresh even when no earlier bar can overwrite price.
+ send({}, {resync_generation:1});await page.waitForTimeout(10);
+ send({}, {resync_generation:2});
+ await expect.poll(()=>requests).toBeGreaterThan(before);
+ await expect(page.getByTestId('chart-last-price')).toHaveText('121');
+ const afterResync=requests;
+ await page.getByRole('group',{name:'Short-term chart timeframe'}).getByRole('button',{name:'30m',exact:true}).click();
+ await expect(page.getByLabel('Primary timeframe')).toHaveValue('30m');
+ await expect.poll(()=>requests).toBeGreaterThan(afterResync);
+ await expect.poll(()=>closedStreams.some(url=>url.includes('timeframe=1h'))).toBe(true);
+ expect(errors).toEqual([]);
+});
+
+test('live indicator uses REST fallback when its public stream is unavailable',async({page})=>{
+ await setup(page,{liveStudy:true});await page.goto('/#indicator');
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByLabel('Chart market status')).toContainText('REST snapshots - 15s');
+ await expect(page.getByText('Open candles and last-price line update from real public data.',{exact:false})).toBeVisible();
+});
+
+test('archive indicator never opens a price stream or presents saved candles as moving prices',async({page})=>{
+ await setup(page,{saved:true});const streams=[];
+ page.on('websocket',socket=>{if(new URL(socket.url()).pathname.startsWith('/api/v1/ws/'))streams.push(socket.url());});
+ await page.goto('/#indicator');await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByLabel('Chart market status')).toContainText('Historical - prices do not update');
+ await expect(page.getByLabel('Chart market status')).toContainText('Saved close:');
+ expect(streams).toEqual([]);
+});
+
+test('Men Crypto indicator hands the exact rules and risk settings to the separate strategy simulator',async({page})=>{
+ await setup(page,{saved:true});await page.goto('/#indicator');
+ await expect(page.getByRole('combobox',{name:'Signal profile',exact:true})).toHaveValue('men_crypto');
+ await page.locator('summary').filter({hasText:'Hypothetical sizing, exits, RSI and dashboard alerts'}).click();
+ await page.getByLabel('Simulation risk percent',{exact:true}).fill('0.5');
+ await page.getByLabel('Simulation max exposure percent',{exact:true}).fill('20');
+ await page.getByLabel('Minimum ADX',{exact:true}).fill('25');
+ await page.getByLabel('buy rsi max',{exact:true}).fill('68');
+ await page.getByLabel('Virtual break-even stop',{exact:true}).check();
+ await page.getByLabel('Virtual trailing stop',{exact:true}).check();
+ const firstRequest=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/v1/indicator-study');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ const studyInput=(await firstRequest).postDataJSON();
+ await expect(page.getByRole('heading',{name:'Hypothetical position tracker'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Signal dashboard',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Backtest these exact rules'}).click();
+ await expect(page.getByLabel('Research strategy')).toHaveValue('indicator');
+ await expect(page.getByLabel('Candle data source')).toHaveValue('archive');
+ await expect(page.getByLabel('risk percent',{exact:true})).toHaveValue('0.5');
+ await expect(page.getByLabel('Simulated break-even stop',{exact:true})).toBeChecked();
+ const secondRequest=page.waitForRequest(request=>new URL(request.url()).pathname==='/api/v1/backtests'&&request.method()==='POST');
+ await page.getByRole('button',{name:'Run historical simulation'}).click();
+ const backtestInput=(await secondRequest).postDataJSON();
+ expect(backtestInput.signal_profile).toBe(studyInput.profile);
+ expect(backtestInput.study_rules).toEqual(studyInput.rules);
+ expect(backtestInput.higher_timeframes).toEqual(studyInput.higher_timeframes);
+ expect(backtestInput.max_exposure_percent).toBe(20);
+ expect(backtestInput.break_even).toBe(true);expect(backtestInput.trailing_stop).toBe(true);
 });
 
 test('scanner, charts, reports, watchlist and history render without JS errors',async({page})=>{

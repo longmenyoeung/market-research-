@@ -2,6 +2,9 @@
 
 Audit date: 2026-10-31, Asia/Bangkok.
 
+Updated after the user asked to add the missing capabilities to the existing
+Python project. See [the implementation guide](men-crypto-profile.md).
+
 This compares the user-supplied TradingView Pine Script v6 specification with
 the current Python/FastAPI and React application. It describes implemented
 behavior and gaps; it does not establish trading performance or full completion.
@@ -19,30 +22,30 @@ BTC archive has no 15m candles. Existing 30m, 1h and 4h studies are historical.
 
 | Requested capability | Current implementation | Assessment |
 | --- | --- | --- |
-| Separate visual indicator and backtest strategy | `analysis/indicator_study.py` and `backtesting/` are separate Python components | Architecture exists; no Pine files yet |
-| Pine Script v6 indicator and strategy deliverables | Current application uses Python/React and Lightweight Charts | Not delivered |
+| Separate visual indicator and backtest strategy | `analysis/indicator_study.py` and `backtesting/` are separate Python components | Separate Python indicator and simulator now share one profile implementation |
+| Pine Script v6 indicator and strategy deliverables | Current application uses Python/React and Lightweight Charts | Python equivalents selected; no Pine packaging |
 | 15m main view and 1h confirmation | Quick 15m/30m/1h/4h controls; live 15m studies request 1h and 4h context | Implemented in app; actual BTC 15m history missing |
 | EMA50/200, RSI14, MACD12/26/9, VWAP, ATR14, volume SMA20, ADX14 | Calculated, documented and available on charts | Implemented |
-| Exact requested LONG/SHORT conjunction | Past markers use EMA20/50/200, RSI/MACD, ADX and relative volume | Different rule; not an exact match |
-| VWAP mandatory for directional signals | VWAP is plotted, but `build_signals()` does not require price above/below it | Gap |
-| Higher trend required by the historical arrow rule | Historical arrows are single-timeframe; archived higher context is shown separately | Gap relative to requested arrow rule |
+| Exact requested LONG/SHORT conjunction | New Men Crypto profile enforces EMA50/200, VWAP, RSI/MACD, ADX, relative volume and confirmed higher trend | Implemented; old experimental profile remains distinct |
+| VWAP mandatory for directional signals | New Men Crypto profile requires close above/below complete-session UTC VWAP | Implemented |
+| Higher trend required by the historical arrow rule | Men Crypto arrows join higher trend at each signal close; experimental arrows remain single-timeframe | Implemented per profile |
 | Current candidates with higher context | Complete report engine applies context and freshness rules; alignment follows preferences | Implemented, live operation not verified successfully |
 | Clear BUY/SELL labels and automatic drawings | Past arrows, EMA/Bollinger/VWAP, swing/structure/zone/trendline drawings | Implemented and visually checked with real archived data |
 | ATR stop and 1:2 reward/risk | Past references draw 1R/2R/3R; simulator default reward multiple is 2 | Implemented as hypothetical references/simulation |
 | Equity and stop-distance position sizing | Shared risk manager accounts for stop distance and modeled costs | Implemented |
 | Default risk 0.5% | Default is 0.25%, with a hard maximum of 0.5% | Intentional difference; no claim of superior performance |
-| Maximum exposure setting | Simulator uses a fixed 1x notional constraint; manual planner accepts leverage assumptions | Independent configurable exposure cap is missing |
+| Maximum exposure setting | Simulator exposure percentage is configurable up to 100% including entry fees | Implemented |
 | One open strategy position | Simulator tracks a single virtual position | Implemented in simulation; visual marker spacing is not position tracking |
-| Optional break-even stop | Not present in simulator | Gap |
-| Optional trailing stop | Not present in simulator | Gap |
+| Optional break-even stop | Configurable R trigger; adjustment active next bar | Implemented in simulation |
+| Optional trailing stop | Configurable ATR distance and activation R; never loosens | Implemented in simulation |
 | Dashboard trend, momentum and reference prices | Available through scanner, reports, study page and planner | Implemented across pages rather than one TradingView table |
-| Current position status | Backtests track virtual positions; application does not read exchange account positions | Real position status is outside the read-only public-data design |
-| BUY/SELL and condition alerts | Dashboard stores classification, invalidation, liquidity, volatility, funding and stale-data changes | Partial; not dedicated closed-bar study alert conditions |
-| SL-hit/TP-hit alerts | No tracker for a manually recorded hypothetical position | Gap; a drawn level does not prove a real fill |
-| Same rules for indicator and strategy | Backtester supports EMA crossover and full evidence-engine replay; new chart markers use a third rule | Important parity gap |
+| Current position status | Backtests track virtual positions; application does not read exchange account positions | New window-local hypothetical position tracker is explicit; real exchange position tracking remains excluded |
+| BUY/SELL and condition alerts | Dashboard stores classification, invalidation, liquidity, volatility, funding and stale-data changes | New confirmed-candle study events are deduplicated; fresh live candidate gates apply |
+| SL-hit/TP-hit alerts | Shared simulator tracks virtual positions and records virtual stop/target events | Implemented; no real fill is claimed |
+| Same rules for indicator and strategy | New indicator strategy reuses chart profile function, rule settings and causal higher joins | Signal parity is tested on identical data |
 | Fees, slippage and funding | Explicit simulation assumptions and historical funding option; public data required | Implemented; reliable live data loading remains blocked |
 | Trades, win rate, profit factor, net result, drawdown | Reported by simulator, with sampling limits | Implemented |
-| Average winning and losing trade | Expected net P&L per trade exists; separate average win/loss fields do not | Partial |
+| Average winning and losing trade | Separate average winning/losing trade and average net R now accompany existing metrics | Implemented |
 | Closed bars, causal indicators, higher-timeframe timing | Regression tests cover calculation causality, confirmation timing and context as-of joins | Implemented software checks; not a universal guarantee against data revisions |
 | Missing volume | Unavailable warm-ups or inadequate volume prevent the relevant rule checks | Implemented |
 | Out-of-sample and walk-forward checks | Separate development/held-out partitions, training-only parameter selection, walk-forward windows | Broader than the prompt; credible market results still required |
@@ -69,28 +72,21 @@ file with matching rule blocks and explicit simulation labeling. Compilation
 and chart checks in TradingView must be reported separately from Python tests.
 No exchange webhook or order-automation integration is part of this project.
 
-## Work required to claim a specification match
+## Remaining scope and verification limits
 
-1. Resolve whether deliverables are the Python app alone or also two Pine v6
-   files. Preserve separate visualization and simulation components either way.
-2. Define one versioned signal profile for the requested EMA50/200, RSI/MACD,
-   VWAP, ADX, volume and confirmed higher trend conjunction. Specify RSI bands,
-   ADX/volume thresholds, UTC VWAP anchoring and missing-data behavior explicitly.
-   OHLCV volume measures participation, not proven buying/selling intent.
-3. Reuse that profile in visualization and simulation; test signal parity and
-   prefix causality, including every confirmed higher-timeframe join. Preserve
-   the existing experimental study as a separately named rule rather than
-   silently changing the meaning of its previous arrows.
-4. Add simulated configurable exposure, optional break-even/trailing stops,
-   explicit intrabar ambiguity assumptions and separate average win/loss metrics.
-5. Implement deduplicated confirmed-candle signal events and hypothetical
-   stop/target tracking notifications. Do not infer exchange positions or fills
-   from candle touches. Keep application notifications inside the dashboard.
-6. Obtain permitted, reliable real 15m and higher-timeframe data and demonstrate
-   a complete live chart/report. Then run development, held-out and walk-forward
-   evaluations with costs; publish sample sizes and limitations before making
-   any performance comparison.
+The shared profile, simulator controls, hypothetical tracker and closed-candle
+notification paths are implemented in the Python app. The user's clarification
+keeps development in this existing project; Pine v6 files are not claimed as
+Python deliverables. There is no exchange execution integration.
 
-The last full verification record reports 238 backend tests, 16 frontend unit
-tests and 18 browser tests. Those passing tests are evidence about software
-behavior, not evidence of profitable or superior trading performance.
+The lower 0.25% default remains an intentional risk-policy difference; 0.5% is
+selectable within the existing hard ceiling. Raw volume is participation rather
+than proof of buying/selling pressure. One selected higher timeframe (1h) can
+match the prompt's configuration; the default 15m view additionally offers 4h.
+
+Reliable live provider access, real 15m history and adequate primary/context
+samples remain unresolved operational requirements. The current 399-candle BTC
+archive is enough for a study, but below the simulator's 400-bar validation
+minimum. Historical tracker metrics are not a substitute for held-out and
+walk-forward validation. Unit/browser tests verify software behavior and do
+not prove profitable or superior trading performance.

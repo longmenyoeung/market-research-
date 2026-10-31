@@ -1,10 +1,14 @@
 # Historical research methodology
 
-The simulator supports two explicit research strategies: a causal replay of the
+The simulator supports three explicit research strategies: shared indicator
+profiles (Men Crypto Signal Pro or the original experimental study), a causal replay of the
 same grouped LONG/SHORT assessor used by reports, and an independent EMA-crossover
 baseline. Reusing the assessor tests its historical behavior; it does not validate
 the scoring weights or establish profitability. All entries, exits, balances and
 positions below are historical simulation state; nothing is sent to an exchange.
+See [the shared profile methodology](men-crypto-profile.md) for exact chart/signal
+parity, exposure controls, optional break-even/trailing assumptions and archive
+mode. The older evidence and EMA modes remain separate research strategies.
 
 ## Data and timing
 

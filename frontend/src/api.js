@@ -30,12 +30,12 @@ export async function api(path, options = {}) {
   }
   return body;
 }
-export const post = (path, body) => api(path,{method:'POST',body:JSON.stringify(body)});
+export const post = (path, body, options={}) => api(path,{...options,method:'POST',body:JSON.stringify(body)});
 export const put = (path, body) => api(path,{method:'PUT',body:JSON.stringify(body)});
 export const timeframes = ['1m','5m','15m','30m','1h','4h','1d'];
 export function number(value, digits=2) { return value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString(undefined,{maximumFractionDigits:digits}); }
 export function compact(value) { return value === null || value === undefined ? '—' : Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:2}).format(Number(value)); }
-export function price(value) { return number(value, Number(value)<1?8:Number(value)<100?4:2); }
+export function price(value) { const magnitude=Math.abs(Number(value));return number(value,magnitude>0&&magnitude<1?Math.min(12,Math.max(8,Math.ceil(-Math.log10(magnitude))+3)):magnitude<100?4:2); }
 export function localTime(value) { return value ? new Date(value).toLocaleString() : '—'; }
 export function classification(value, generatedAt, validUntilMs) {
   const generated = Date.parse(generatedAt);

@@ -1,5 +1,79 @@
 # Verification record
 
+## Chart movement and small-price labels - 2026-10-31 (Asia/Bangkok)
+
+The indicator workspace now subscribes to the selected live symbol/timeframe,
+updates its provisional candle, volume and last-trade price line, and falls back
+to public REST snapshots every 15 seconds when the stream is unavailable. It
+rejects invalid, stale, out-of-order and mismatched updates. Analysis refreshes
+after a candle closes, stream resynchronization, and every 60 seconds. Switching
+symbol/timeframe reloads a previously built study; old subscriptions and requests
+are cleaned up. Background refreshes preserve the chart's visible time range.
+
+Price-axis precision comes from observed OHLC decimal places (or tick metadata
+when provided), instead of Lightweight Charts' default two decimals. Price
+overlays and the MACD/ATR panels use matching precision. Historical setup levels
+remain anchored; archives never subscribe to a live price feed.
+
+| Check | Observed result |
+| --- | --- |
+| Full backend suite, including profile refinements | 255 passed; one non-failing Starlette TestClient warning |
+| Frontend unit suite | 21 passed |
+| Full browser suite | 22 passed |
+| Production build | Passed; non-blocking bundle-size warning |
+| Synthetic live browser checks | Received prices changed 121 to 123 to 124; stale updates were rejected; closed candles and resynchronization refreshed analysis; REST fallback and automatic timeframe reload passed |
+| Actual built 1000PEPEUSDT archive chart | HTTP 200; 399 candles, 5 historical signals, saved close 0.0050669, current NO TRADE |
+| Actual rendered price labels | Reference 0.0053944, stop 0.0051261 and TP1/2/3 remained distinct; screenshot visually inspected |
+| Actual automatic timeframe switch | 1h to 30m triggered a new study without another Build click |
+| Actual browser/mobile check | Zero JavaScript/HTTP errors; body width 390 at viewport width 390 |
+| New real Binance public discovery check | upstream_timeout; no live data substituted |
+
+Synthetic stream tests verify UI behavior, not real exchange connectivity. The
+local app is running at http://127.0.0.1:8000/. Fresh Binance connectivity remains
+an unresolved operational requirement, so the complete project cannot yet be
+certified for live use on this computer. Open candles are provisional; indicator
+decisions use closed candles. No execution functionality was introduced.
+
+## Men Crypto requirements added to the existing app - 2026-10-31 (Asia/Bangkok)
+
+After comparing the attached specification, the user requested the missing
+capabilities in the existing project. Added a separately named Men Crypto
+profile with EMA50/200, complete-session UTC VWAP, RSI/MACD, ADX, relative volume
+and causal higher confirmation. The chart and new indicator strategy share the
+same signal function. The original experimental profile, EMA baseline and report
+evidence replay remain distinct options.
+
+Added simulated exposure caps, optional next-bar break-even/trailing adjustments,
+average winning/losing trade and net-R metrics, archive-only validation with
+explicit funding scenarios, a window-local hypothetical position tracker,
+deduplicated confirmed-candle dashboard alerts, and a settings-preserving handoff
+from indicator to strategy simulator. No exchange execution was added.
+
+| Check | Observed result |
+| --- | --- |
+| Full backend suite | 255 passed, 1 non-failing Starlette TestClient warning |
+| New profile/simulator/alerts tests after final dedup and EMA warm-up refinements | 17 passed |
+| Frontend unit suite | 16 passed |
+| Full browser suite | 19 passed; focused indicator/handoff tests passed after the dashboard-value card was added |
+| Production build | Passed; Vite reports a non-blocking bundle-size warning above 500 kB |
+| Actual built BTCUSDT Men Crypto archive study | HTTP 200; 399 candles, 5 past SELL markers, current eligibility NO TRADE |
+| Actual default hypothetical tracker | 2 closed virtual trades, FLAT at window end, -49.94 modeled net P&L with the default hypothetical inputs; not out-of-sample evidence |
+| Actual archive notifications | Zero; archived studies cannot emit current alerts |
+| Actual strategy handoff | Shared indicator mode and archive/scenario sources selected; settings retained |
+| Actual saved-range check | Explicitly reported 399 available candles versus 400 required; no unsupported validation result generated |
+| Actual browser and mobile | No JavaScript or HTTP errors; body width 390 at a 390-pixel viewport |
+
+Tests cover nonempty chart/strategy signal parity, future-prefix invariance,
+VWAP completeness, missing higher context, symmetric LONG/SHORT conditions,
+next-bar stop activation, exposure and single-position limits, break-even costs,
+closed-candle notification deduplication including risk-only setting changes,
+archive-only provider isolation, and development/walk-forward separation.
+
+The implementation is Python/React, not Pine v6 packaging. Live Binance access,
+real 15m availability and sufficient real validation history remain unresolved
+operational gates. No profitable or superior performance is claimed. See
+`men-crypto-profile.md` and the updated `prompt-comparison.md` for precise scope.
+
 ## Short-term timeframe workflow - 2026-10-31 (Asia/Bangkok)
 
 Added synchronized 15m, 30m, 1h and 4h controls to the indicator page. Its live

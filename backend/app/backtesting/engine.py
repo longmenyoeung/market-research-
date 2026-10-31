@@ -7,49 +7,40 @@ import numpy as np
 import pandas as pd
 from pydantic import Field, field_validator, model_validator
 
-from app.core.risk_limits import MAX_DAILY_LOSS_PERCENT, MAX_RISK_PERCENT, DEFAULT_RISK_PERCENT
+from app.core.risk_limits import MAX_DAILY_LOSS_PERCENT, MAX_RISK_PERCENT
 from app.analysis.risk import RiskManager
 from app.indicators.engine import wilder
 from app.schemas.candles import Timeframe, INTERVAL_MS, normalize_symbol
-from app.schemas.platform import StrictModel, Finite, Preferences
+from app.schemas.platform import Finite, Preferences
+from app.schemas.simulation import SimulationOptions
+from app.schemas.indicator_study import StudyRules
 
 
-class BacktestRequest(StrictModel):
+class SimulationConfig(SimulationOptions):
     symbol: str
     timeframe: Timeframe = "1h"
-    strategy: Literal["ema", "evidence"] = "ema"
+    strategy: Literal["ema", "evidence", "indicator"] = "ema"
+    signal_profile: Literal["experimental", "men_crypto"] = "men_crypto"
+    study_rules: StudyRules = Field(default_factory=StudyRules)
     analysis_settings: Preferences = Field(default_factory=Preferences)
     higher_timeframes: list[Timeframe] = Field(default_factory=list, max_length=3)
     lower_timeframe: Timeframe | None = None
     confirmation: Literal["candidate", "breakout_or_retest"] = "breakout_or_retest"
     signal_delay_bars: int = Field(default=1, ge=1, le=5)
     funding_mode: Literal["scenario", "historical"] = "scenario"
-    start_time: int = Field(ge=0, le=4_102_444_800_000)
-    end_time: int = Field(ge=0, le=4_102_444_800_000)
-    equity: Finite = Field(default=10000, gt=0, le=1e9)
-    risk_percent: Finite = Field(default=DEFAULT_RISK_PERCENT, gt=0, le=MAX_RISK_PERCENT)
     fast: int = Field(default=20, ge=2, le=100)
     slow: int = Field(default=50, ge=3, le=300)
     atr_period: int = Field(default=14, ge=2, le=100)
     atr_stop: Finite = Field(default=1.5, gt=0, le=10)
-    reward_multiple: Finite = Field(default=2, gt=0, le=10)
-    fee_bps: Finite = Field(default=5, ge=0, le=100)
-    slippage_bps: Finite = Field(default=5, ge=0, le=1000)
     # Half of this scenario spread is charged on entry and half on exit.
-    spread_bps: Finite = Field(default=2, ge=0, le=1000)
-    funding_bps_per_8h: Finite = Field(default=0, ge=-100, le=100)
     development_fraction: Finite = Field(default=0.6, ge=0.3, le=0.8)
     walk_forward_folds: int = Field(default=3, ge=2, le=6)
-    max_holding_bars: int = Field(default=100, ge=1, le=1000)
     _symbol = field_validator("symbol")(normalize_symbol)
 
     @model_validator(mode="after")
-    def range_valid(self) -> Self:
-        if self.end_time <= self.start_time or self.fast >= self.slow:
-            raise ValueError("Require start < end and fast < slow.")
-        count = (self.end_time-self.start_time)//INTERVAL_MS[self.timeframe]+1
-        if count > 20000 or count < max(400, self.slow*3):
-            raise ValueError("Select at least max(400,3*slow) and at most 20,000 bars.")
+    def roles_valid(self) -> Self:
+        if self.fast >= self.slow:
+            raise ValueError("Require fast < slow.")
         if any(INTERVAL_MS[t] <= INTERVAL_MS[self.timeframe] for t in self.higher_timeframes):
             raise ValueError("Higher context must be above the primary timeframe.")
         if self.lower_timeframe and INTERVAL_MS[self.lower_timeframe] >= INTERVAL_MS[self.timeframe]:
@@ -57,8 +48,28 @@ class BacktestRequest(StrictModel):
         return self
 
 
+class BacktestRequest(SimulationConfig):
+    start_time: int = Field(ge=0, le=4_102_444_800_000)
+    end_time: int = Field(ge=0, le=4_102_444_800_000)
+    data_source: Literal["live", "archive"] = "live"
+
+    @model_validator(mode="after")
+    def range_valid(self) -> Self:
+        if self.end_time <= self.start_time:
+            raise ValueError("Require start < end.")
+        count = (self.end_time-self.start_time)//INTERVAL_MS[self.timeframe]+1
+        if count > 20000 or count < max(400, self.slow*3):
+            raise ValueError("Select at least max(400,3*slow) and at most 20,000 bars.")
+        if self.data_source == "archive" and self.funding_mode == "historical":
+            raise ValueError("Archive-only runs require explicit scenario funding; no local historical funding archive exists.")
+        return self
+
+
 def prepare(df: pd.DataFrame, config: BacktestRequest, contexts: dict[str, pd.DataFrame] | None = None,
             funding_events: list[dict] | None = None, cancel=None) -> pd.DataFrame:
+    if config.strategy == "indicator":
+        from app.backtesting.indicator import prepare_indicator
+        return prepare_indicator(df, config, contexts)
     if config.strategy == "evidence":
         from app.backtesting.evidence import prepare_evidence
         return prepare_evidence(df, config, contexts or {}, funding_events or [], cancel)
@@ -85,6 +96,9 @@ def summarize_trades(trades: list[dict], curve: list[dict], initial: float,
     center = (proportion+z*z/(2*count))/(1+z*z/count) if count else None
     half = z*math.sqrt(proportion*(1-proportion)/count+z*z/(4*count*count))/(1+z*z/count) if count else None
     return {"trades": count, "win_rate": wins/count if count else None, "profit_factor": gains/losses if losses else None,
+            "average_winning_trade": float(results[results>0].mean()) if wins else None,
+            "average_losing_trade": float(results[results<0].mean()) if np.any(results<0) else None,
+            "average_realized_r": float(np.mean([t["realized_r"] for t in trades])) if trades and all("realized_r" in t for t in trades) else None,
             "profit_factor_note": "Undefined when no losing trades exist." if not losses else None,
             "expected_net_pnl_per_trade": float(results.mean()) if count else None,
             "net_pnl": float(results.sum()), "net_return_percent": float(results.sum())/initial*100,
@@ -102,9 +116,9 @@ def summarize_trades(trades: list[dict], curve: list[dict], initial: float,
             "short": {"trades": sum(t["side"]=="SHORT" for t in trades), "net_pnl": sum(t["net_pnl"] for t in trades if t["side"]=="SHORT")}}
 
 
-def simulate(prepared: pd.DataFrame, config: BacktestRequest, start: int, end: int,
-             funding_events: list[dict] | None = None, cancel=None) -> dict:
-    balance = config.equity; position = None; trades=[]; curve=[]
+def simulate(prepared: pd.DataFrame, config: SimulationConfig, start: int, end: int,
+             funding_events: list[dict] | None = None, cancel=None, *, close_at_end: bool = True) -> dict:
+    balance = config.equity; position = None; trades=[]; curve=[]; events_log=[]
     fee, slip = config.fee_bps/10000, config.slippage_bps/10000
     half_spread = config.spread_bps/20000
     # Spread and slippage are charged once per side. The entry price already
@@ -130,7 +144,7 @@ def simulate(prepared: pd.DataFrame, config: BacktestRequest, start: int, end: i
             else:
                 direction = int(previous.signal); raw_entry = float(bar.open)
                 entry = raw_entry*(1+direction*adverse)
-                distance = float(previous.atr)*config.atr_stop
+                distance = float(previous.atr)*(config.study_rules.atr_stop_multiple if config.strategy == "indicator" else config.atr_stop)
                 stop, target = entry-direction*distance, entry+direction*distance*config.reward_multiple
                 if config.strategy == "evidence":
                     stop, target = float(previous.stop_reference), float(previous.target_reference)
@@ -139,18 +153,23 @@ def simulate(prepared: pd.DataFrame, config: BacktestRequest, start: int, end: i
                 costs_at_stop = stop*adverse+(entry+stop)*fee
                 costs_at_target = target*adverse+(entry+target)*fee
                 net_rr = (reward-costs_at_target)/(distance+costs_at_stop) if distance+costs_at_stop > 0 else -1
-                entry_valid = config.strategy != "evidence" or net_rr >= float(RiskManager.minimum_net_reward_to_risk)
+                entry_valid = config.strategy == "ema" or net_rr >= float(RiskManager.minimum_net_reward_to_risk)
                 if stop > 0 and target > 0 and distance > 0 and reward > 0 and entry_valid:
                     cost_per_unit = distance+stop*adverse+(entry+stop)*fee
                     quantity = float(RiskManager.size(equity=balance, risk_percent=config.risk_percent,
                                                      cost_per_unit=cost_per_unit, entry=entry,
                                                      fee_bps=config.fee_bps))
+                    quantity = min(quantity, balance*config.max_exposure_percent/100/(entry*(1+fee)))
                     if quantity > 0:
                         entry_fee = quantity*entry*fee; balance -= entry_fee
                         position = {"direction": direction, "entry": entry, "stop": stop, "target": target, "quantity": quantity,
                                     "entry_index": i, "entry_time": int(bar.time), "entry_fee": entry_fee, "funding": 0.0,
                                     "signal_index": signal_index,
-                                    "raw_entry": raw_entry}
+                                    "raw_entry": raw_entry, "initial_distance": distance,
+                                    "initial_risk": quantity*cost_per_unit, "favorable": entry,
+                                    "initial_stop": stop}
+                        events_log.append({"kind":"virtual_entry", "known_at":int(bar.time)+duration-1,
+                                           "side":"LONG" if direction==1 else "SHORT", "price":entry})
         if position:
             p=position; direction=p["direction"]; exit_price=None; reason=None
             if (bar.open <= p["stop"] if direction == 1 else bar.open >= p["stop"]):
@@ -159,8 +178,8 @@ def simulate(prepared: pd.DataFrame, config: BacktestRequest, start: int, end: i
                 exit_price=p["stop"]; reason="stop (adverse-first if both touched)"
             elif (bar.high >= p["target"] if direction == 1 else bar.low <= p["target"]):
                 exit_price=p["target"]; reason="target"
-            elif i-p["entry_index"]+1 >= config.max_holding_bars or i == end-1:
-                exit_price=float(bar.close); reason="holding limit" if i != end-1 else "window end"
+            elif i-p["entry_index"]+1 >= config.max_holding_bars or (close_at_end and i == end-1):
+                exit_price=float(bar.close); reason="holding limit" if i-p["entry_index"]+1 >= config.max_holding_bars else "window end"
             # Scheduled funding assumption at UTC 00/08/16. Intrabar exits are
             # conservatively charged for scheduled events in their exit bar too.
             events = (int(bar.time)+duration-1)//funding_interval-(int(bar.time)-1)//funding_interval
@@ -184,12 +203,32 @@ def simulate(prepared: pd.DataFrame, config: BacktestRequest, start: int, end: i
                     "fees":p["entry_fee"]+exit_fee, "funding":p["funding"],
                     "spread_cost": traded_notional*half_spread, "slippage_cost": traded_notional*slip,
                     "net_pnl":net_pnl, "holding_bars":i-p["entry_index"]+1, "reason":reason})
+                trades[-1].update(initial_stop=p["initial_stop"], initial_risk=p["initial_risk"], realized_r=net_pnl/p["initial_risk"])
+                events_log.append({"kind":"virtual_tp" if reason=="target" else "virtual_sl" if "stop" in reason else "virtual_exit",
+                                   "known_at":int(bar.time)+duration-1, "side":"LONG" if direction==1 else "SHORT", "price":fill})
                 position=None
+            else:
+                # Closed-bar adjustments become active only on the next bar.
+                # Today's high cannot retroactively move a stop for today's low.
+                p["favorable"] = max(p["favorable"],float(bar.high)) if direction==1 else min(p["favorable"],float(bar.low))
+                gain = direction*(p["favorable"]-p["entry"])
+                candidates = [p["stop"]]
+                if config.break_even and gain >= config.break_even_at_r*p["initial_distance"]:
+                    candidates.append(p["entry"])
+                if config.trailing_stop and gain >= config.trailing_activation_r*p["initial_distance"] and np.isfinite(bar.atr):
+                    candidates.append(p["favorable"]-direction*float(bar.atr)*config.trailing_atr)
+                adjusted = max(candidates) if direction==1 else min(candidates)
+                if adjusted != p["stop"]:
+                    p["stop"] = adjusted
+                    events_log.append({"kind":"virtual_stop_adjusted", "known_at":int(bar.time)+duration-1,
+                                       "side":"LONG" if direction==1 else "SHORT", "price":adjusted})
         marked = balance+(position["direction"]*position["quantity"]*(float(bar.close)-position["entry"]) if position else 0)
         curve.append({"time":int(bar.time), "equity":marked})
     metrics = summarize_trades(trades, curve, config.equity, blocked)
     metrics["risk_percent_used"] = config.risk_percent
-    return {"metrics": metrics, "trades": trades, "equity_curve": curve,
+    open_position = None if position is None else {**position,"side":"LONG" if position["direction"]==1 else "SHORT","hypothetical_only":True}
+    return {"metrics": metrics, "trades": trades, "equity_curve": curve, "open_position":open_position,
+            "events":events_log, "hypothetical_only":True,
             "risk_rails": {"risk_percent": config.risk_percent,
                            "max_risk_percent": float(MAX_RISK_PERCENT),
                            "daily_loss_cap_percent": float(MAX_DAILY_LOSS_PERCENT),
@@ -226,18 +265,19 @@ def run_validation(df: pd.DataFrame, config: BacktestRequest, contexts=None, fun
     if split <= config.slow+10 or len(df)-split < config.walk_forward_folds*20:
         raise ValueError("Insufficient development or held-out sample.")
     prepared = prepare(df,config,contexts,funding_events,cancel)
-    warmup = config.analysis_settings.indicators.trend_anchor if config.strategy == "evidence" else config.slow
+    warmup = config.analysis_settings.indicators.trend_anchor if config.strategy in {"evidence", "indicator"} else config.slow
     if warmup >= split-10:
         raise ValueError("Development partition is too short for the selected indicator warm-up.")
     def evaluate(variant, left, right):
         return simulate(prepared,variant,left,right,funding_events,cancel)
     def variant(value):
         if config.strategy == "ema": return config.model_copy(update={"atr_stop":value})
+        if config.strategy == "indicator": return config.model_copy(update={"reward_multiple":value})
         settings = config.analysis_settings.model_copy(update={"candidate_score":value})
         return config.model_copy(update={"analysis_settings":settings})
-    parameter = "candidate_score" if config.strategy == "evidence" else "atr_stop"
-    requested = config.analysis_settings.candidate_score if config.strategy == "evidence" else config.atr_stop
-    variants = sorted(set([max(50,requested-10),requested,min(100,requested+10)])) if config.strategy == "evidence" else sorted(set([max(.25,requested*.75),requested,requested*1.25]))
+    parameter = "candidate_score" if config.strategy == "evidence" else "reward_multiple" if config.strategy == "indicator" else "atr_stop"
+    requested = config.analysis_settings.candidate_score if config.strategy == "evidence" else config.reward_multiple if config.strategy == "indicator" else config.atr_stop
+    variants = sorted(set([max(50,requested-10),requested,min(100,requested+10)])) if config.strategy == "evidence" else sorted(set([max(.25,requested*.75),requested,min(10,requested*1.25)]))
     development = evaluate(config,warmup,split)
     sensitivity=[]
     for value in variants:
@@ -264,7 +304,8 @@ def run_validation(df: pd.DataFrame, config: BacktestRequest, contexts=None, fun
                       "metrics":evaluated["metrics"]})
     assumptions=[
         f"Closed-bar signals enter after {config.signal_delay_bars} bar(s) at the open, with modeled spread/slippage; no same-close fills.",
-        "One simulated position at a time; RiskManager sizing, maximum 1x notional, no averaging down or martingale.",
+        f"One simulated position at a time; exposure capped at {config.max_exposure_percent}% of equity including entry fee, never above 1x notional.",
+        "Break-even/trailing references update after a closed candle and activate on the next bar; stops never loosen. A stop at entry can still lose fees, slippage and funding.",
         "Half-spread and slippage are included once per fill; fees are charged per side.",
         "A 1% UTC daily realized-loss rail blocks new entries for the rest of that day.",
         "Stop is assumed first when both stop/target touch; stop gaps use the adverse open.",
@@ -276,6 +317,15 @@ def run_validation(df: pd.DataFrame, config: BacktestRequest, contexts=None, fun
         "Small samples and dependent trades limit statistical confidence. No result guarantees future performance.",
     ]
     trace=[]
+    if config.strategy == "indicator":
+        assumptions += [
+            f"Shared indicator profile {config.signal_profile}: prepare_indicator() calls the chart's exact build_signals() function with the same settings and context data.",
+            "Indicator arrows are evidence events, not fills; open positions and risk limits can suppress simulated entries.",
+            "Indicator simulation entries require at least 1.5 modeled net reward/risk after spread, fees and slippage, matching the platform risk rail.",
+            "Only fully closed higher candles and complete-session UTC VWAP can confirm the Men Crypto profile.",
+        ]
+        trace=[{"time":int(row.time),"known_at":int(row.time)+INTERVAL_MS[config.timeframe]-1,
+                "signal":int(row.signal),"context_known_at":int(row.context_known_at)} for row in prepared.itertuples()]
     if config.strategy == "evidence":
         assumptions += [
             "The same assess() function, indicators, group weights and confirmed structure rules as reports are replayed with a historical clock.",
@@ -289,7 +339,7 @@ def run_validation(df: pd.DataFrame, config: BacktestRequest, contexts=None, fun
         trace=[{"time":int(row.time),"known_at":int(row.time)+INTERVAL_MS[config.timeframe]-1,
                 "classification":row.evidence_classification,"long_score":float(row.long_score),"short_score":float(row.short_score),
                 "context_known_at":int(row.context_known_at),"confirmation_met":bool(row.confirmation_met)} for row in prepared.itertuples()]
-    return {"strategy":"Report evidence engine historical replay" if config.strategy=="evidence" else "EMA crossover research baseline (separate from the discretionary evidence engine)",
+    return {"strategy":"Shared indicator rules historical simulation" if config.strategy=="indicator" else "Report evidence engine historical replay" if config.strategy=="evidence" else "EMA crossover research baseline (separate from the discretionary evidence engine)",
             "parameters":config.model_dump(),"bars":len(df),"split_time":int(df.time.iloc[split]),
             "development":development,"out_of_sample":holdout,"holdout_parameters":{parameter:selected["value"]},
             "selection_status":"selected from development" if eligible else "insufficient development trades; requested parameter retained",

@@ -39,6 +39,7 @@ class PlatformService:
         self.scan_inputs: dict[str,dict] = {}
         self.market.closed_candle_listeners.append(self._invalidate_reports)
         self.analysis_slots = asyncio.Semaphore(3)
+        self.study_alert_lock = asyncio.Lock()
         self.maintenance_task: asyncio.Task | None = None
         self.quote_task: asyncio.Task | None = None
         self.scan_task: asyncio.Task | None = None
