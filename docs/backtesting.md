@@ -36,7 +36,10 @@ The model permits one position at a time, with risk-based continuous quantity an
 a maximum 1x notional margin assumption. No averaging down or martingale exists.
 The shared RiskManager defaults to 0.25% risk and rejects values above 0.5%.
 New entries stop for the remaining UTC day after realized net losses reach 1% of
-day-start balance. This is a simulation convention; unmodeled gaps can exceed it.
+the day's baseline. The baseline is the lower of cash and the prior close mark,
+that is, the previous bar's close-marked equity. The two differ only when a
+position is carried over UTC midnight. This is a simulation convention;
+unmodeled gaps can exceed it.
 
 ## Costs and exits
 

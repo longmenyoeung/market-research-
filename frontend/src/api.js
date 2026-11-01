@@ -8,6 +8,12 @@ export function websocketProtocols() {
 function browserOffline() { return typeof navigator!=='undefined'&&navigator.onLine===false; }
 const offlineMessage='The browser is offline. In Chrome DevTools, set Network throttling to No throttling, then reload the page.';
 let offlineRetryAt=0;
+function validationMessage(entry) {
+  const loc=Array.isArray(entry?.loc)?entry.loc:[];
+  const field=loc.length?String(loc[loc.length-1]):'';
+  const msg=entry?.msg==null||entry.msg===''?'Invalid value':String(entry.msg);
+  return field?`${field}: ${msg}`:msg;
+}
 export async function api(path, options = {}) {
   const {background=false,...requestOptions}=options;
   if(!browserOffline())offlineRetryAt=0;
@@ -25,7 +31,7 @@ export async function api(path, options = {}) {
   let body;
   try { body = await response.json(); } catch { throw new Error(`Server returned HTTP ${response.status}. Check the backend connection.`); }
   if (!response.ok) {
-    const detail = Array.isArray(body.detail) ? body.detail.map(d => `${d.loc?.slice(-1)}: ${d.msg}`).join('; ') : body.detail;
+    const detail = Array.isArray(body.detail) ? body.detail.map(validationMessage).join('; ') : body.detail;
     throw new Error(body.error?.message || detail || `Request failed (${response.status})`);
   }
   return body;

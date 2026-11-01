@@ -13,6 +13,18 @@ describe('Data honesty and API failures',()=>{
  });
  it('preserves explicit false and zero filters',()=>{const query=queryString({watchlist_only:false,minimum_volume:0,rsi_min:'',unknown:null});expect(query).toContain('watchlist_only=false');expect(query).toContain('minimum_volume=0');expect(query).not.toContain('rsi_min');});
  it('surfaces provider errors instead of returning fake data',async()=>{vi.stubGlobal('fetch',vi.fn(async()=>({ok:false,status:503,json:async()=>({error:{message:'Provider denied access'}})})));await expect(api('/api/v1/markets')).rejects.toThrow('Provider denied access');});
+ it('formats FastAPI validation details with and without loc',async()=>{
+  const reply=detail=>vi.stubGlobal('fetch',vi.fn(async()=>({ok:false,status:422,json:async()=>({detail})})));
+  vi.stubGlobal('navigator',{onLine:true});
+  reply([{loc:['body','symbol'],msg:'field required'},{loc:['query','limit',0],msg:'not an integer'}]);
+  await expect(api('/api/v1/scanner')).rejects.toThrow('symbol: field required; 0: not an integer');
+  reply([{msg:'invalid payload'},{loc:[],msg:'empty loc'}]);
+  await expect(api('/api/v1/scanner')).rejects.toThrow(/^invalid payload; empty loc$/);
+  reply([{loc:['body','symbol']},{type:'missing'},null]);
+  await expect(api('/api/v1/scanner')).rejects.toThrow(/^symbol: Invalid value; Invalid value; Invalid value$/);
+  reply('Symbol not supported');
+  await expect(api('/api/v1/scanner')).rejects.toThrow(/^Symbol not supported$/);
+ });
  it('explains browser offline mode and pauses repeated failed background reads',async()=>{
   const fetch=vi.fn(async()=>{throw new TypeError('Failed to fetch');});
   vi.stubGlobal('navigator',{onLine:false});vi.stubGlobal('fetch',fetch);

@@ -435,9 +435,13 @@ class PlatformService:
         try:
             bulk=await self.metrics()
         except MarketDataError as exc:
+            warning=f"Current quote refresh failed: {exc.code}"
             for row in scan["rows"]:
                 if row.get("quality") not in {"pending","unavailable"}:
-                    row.update(classification="NO TRADE",quality="unavailable",warnings=[f"Current quote refresh failed: {exc.code}"])
+                    # Keep earlier row warnings; repeated failures add one entry.
+                    warnings=list(row.get("warnings") or [])
+                    if warning not in warnings: warnings.append(warning)
+                    row.update(classification="NO TRADE",quality="unavailable",warnings=warnings)
             return
         now=int(datetime.now(UTC).timestamp()*1000)
         preferences=self.preferences.model_copy(deep=True)

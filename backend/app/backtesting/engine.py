@@ -134,7 +134,9 @@ def simulate(prepared: pd.DataFrame, config: SimulationConfig, start: int, end: 
         bar, previous = prepared.iloc[i], prepared.iloc[max(0,signal_index)]
         bar_day = int(bar.time)//86_400_000
         if bar_day != day:
-            day = bar_day; day_start_equity = balance; daily_realized = 0.0
+            # Baseline is the lower of cash and the prior close mark (known at this
+            # open), so a losing position held over midnight cannot widen the rail.
+            day = bar_day; day_start_equity = min(balance, curve[-1]["equity"]) if curve else balance; daily_realized = 0.0
         can_enter = daily_realized > -float(MAX_DAILY_LOSS_PERCENT)*day_start_equity/100
         # Do not import a development signal into the first held-out bar.
         evidence_ok = config.strategy != "evidence" or previous.evidence_score >= config.analysis_settings.candidate_score
@@ -297,7 +299,7 @@ def run_validation(df: pd.DataFrame, config: BacktestRequest, contexts=None, fun
         chosen=max(eligible_training,key=lambda item:item[0])[1] if eligible_training else requested
         evaluated=evaluate(variant(chosen),int(left),int(right))
         folds.append({"train_end_time":int(df.time.iloc[left-1]),"test_start_time":int(df.time.iloc[left]),
-                      "test_end_time":int(df.time.iloc[right-1]),"selected_atr_stop":variant(chosen).atr_stop,
+                      "test_end_time":int(df.time.iloc[right-1]),
                       "selected_parameter":parameter,"selected_value":chosen,
                       "selection_score":next(item[0] for item in training if item[1]==chosen),
                       "selection_status":"selected from training" if eligible_training else "insufficient training trades; requested parameter retained",
@@ -307,7 +309,7 @@ def run_validation(df: pd.DataFrame, config: BacktestRequest, contexts=None, fun
         f"One simulated position at a time; exposure capped at {config.max_exposure_percent}% of equity including entry fee, never above 1x notional.",
         "Break-even/trailing references update after a closed candle and activate on the next bar; stops never loosen. A stop at entry can still lose fees, slippage and funding.",
         "Half-spread and slippage are included once per fill; fees are charged per side.",
-        "A 1% UTC daily realized-loss rail blocks new entries for the rest of that day.",
+        "A 1% UTC daily realized-loss rail blocks new entries for the rest of that day; its baseline is the lower of cash and the prior close mark.",
         "Stop is assumed first when both stop/target touch; stop gaps use the adverse open.",
         "Bar-close marked equity excludes intrabar drawdown and liquidation/maintenance tiers.",
         "Historical provider rates and mark prices are charged at actual observed funding timestamps." if config.funding_mode=="historical" else "Funding uses the requested per-eight-hour scenario at UTC 00/08/16 with candle close as mark proxy; zero excludes funding.",

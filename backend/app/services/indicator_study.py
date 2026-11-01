@@ -51,6 +51,7 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
             for timeframe in higher_timeframes:
                 context = {"timeframe": timeframe, "role": "higher", "usable": False,
                            "historical_available": False, "summary": {"trend": "unknown"}}
+                context_minimum = config.trend_anchor if request.profile=="men_crypto" else minimum
                 try:
                     query = CandleQuery(symbol=request.symbol, timeframe=timeframe, limit=1200 if request.source=="archive" else len(base["candles"]))
                     saved = await platform.market.archive(query) if request.source=="archive" else await platform.market.analysis_candles(query)
@@ -58,9 +59,11 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
                     # time. Later archived candles cannot confirm an earlier view.
                     context_candles = [c for c in saved.candles if c.is_closed and c.close_time <= candles[-1].close_time]
                     times = [c.open_time for c in context_candles]
-                    context_minimum = config.trend_anchor if request.profile=="men_crypto" else minimum
-                    if len(times) < context_minimum or not np.all(np.diff(times) == INTERVAL_MS[timeframe]):
-                        context["error"] = "Insufficient continuous confirmed candles at this study time."
+                    if len(times) < context_minimum:
+                        context["error"] = (f"Insufficient {timeframe} context sample: {len(times)} confirmed candles at this study time; "
+                                            f"{context_minimum} are required.")
+                    elif not np.all(np.diff(times) == INTERVAL_MS[timeframe]):
+                        context["error"] = f"{timeframe} context candles contain gaps at this study time; a continuous window is required."
                     else:
                         other, _, other_shape = await platform._calculations(request.symbol, timeframe, context_candles, config)
                         context_frames[timeframe] = frame(context_candles)
@@ -92,11 +95,21 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
             "multi_timeframe": contexts,
         }
     current_time = int(datetime.now(UTC).timestamp()*1000)
-    usable = request.source == "live" and current_time <= base["valid_until_ms"] and base["market_overview"]["quality"]["status"] == "usable"
-    if study["unavailable"]:
-        usable = False
-    if request.profile == "men_crypto" and not (bool(df.higher_ready.iloc[-1]) and bool(df.vwap_complete_session.iloc[-1])):
-        usable = False
+    data_usable = (request.source == "live" and current_time <= base["valid_until_ms"]
+                   and base["market_overview"]["quality"]["status"] == "usable" and not study["unavailable"])
+    # Only the current bar's readiness decides current eligibility; past markers
+    # were already gated bar by bar inside build_signals.
+    profile_reason = None
+    if request.profile == "men_crypto":
+        missing = []
+        if not bool(df.higher_ready.iloc[-1]):
+            errors = "; ".join(f"{c['timeframe']}: {c['error']}" for c in contexts if c.get("error"))
+            missing.append("confirmed higher-timeframe context is not ready" + (f" ({errors})" if errors else ""))
+        if not bool(df.vwap_complete_session.iloc[-1]):
+            missing.append("the current UTC VWAP session is not complete in the loaded window")
+        if missing:
+            profile_reason = "NO TRADE: Men Crypto " + " and ".join(missing) + "."
+    usable = data_usable and profile_reason is None
     classification = base["assessment"]["classification"] if usable else "NO TRADE"
     profile_blocks = False
     if classification in {"LONG candidate","SHORT candidate"}:
@@ -120,6 +133,7 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
         current_signal={"LONG candidate": "BUY candidate", "SHORT candidate": "SELL candidate"}.get(classification, classification),
         current_reason=("WAIT: the selected indicator profile filters are not all confirmed." if profile_blocks else base["assessment"].get("final_assessment", "Review all live report conditions before a manual decision.") if usable else
                         "Saved candles are historical. They cannot establish a current BUY or SELL opportunity." if request.source == "archive" else
+                        profile_reason if data_usable and profile_reason else
                         "Required current data is stale, incomplete or invalid; no current direction is available."),
     )
     if request.profile == "men_crypto":
