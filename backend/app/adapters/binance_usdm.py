@@ -111,6 +111,7 @@ class BinanceUSDMAdapter:
         self._lock = asyncio.Lock()
         self._last_request_at: float | None = None
         self._blocked_until = 0.0
+        self._fallback_until = 0.0
         self._cooldown_code = "rate_limited"
         self._access_blocked = False
         self._weight_budget = RollingBudget(settings.request_weight_per_minute,60)
@@ -118,14 +119,26 @@ class BinanceUSDMAdapter:
         self._clock_lock = asyncio.Lock()
         self._server_clock: tuple[int,float] | None = None
 
+    def _prefer_fallback(self) -> bool:
+        if not self._use_public_fallback:
+            return False
+        return self._access_blocked or time.monotonic() < max(self._blocked_until, self._fallback_until)
+
+    def _mark_fallback(self, duration: float = 300.0) -> None:
+        if self._use_public_fallback:
+            self._fallback_until = max(self._fallback_until, time.monotonic() + duration)
+
     async def aclose(self) -> None:
         await self._client.aclose()
 
     async def discover_contracts(self) -> DiscoveryResponse:
+        if self._prefer_fallback():
+            return fallback_discovery(self._settings.allowed_symbols)
         try:
             payload = await self._read(EXCHANGE_INFO_URL)
         except MarketDataError:
             if self._use_public_fallback:
+                self._mark_fallback()
                 return fallback_discovery(self._settings.allowed_symbols)
             raise
         contracts = parse_contracts(payload)
@@ -141,19 +154,33 @@ class BinanceUSDMAdapter:
 
     async def fetch_metrics(self) -> dict:
         from app.adapters.metrics import fetch_bulk
+        if self._prefer_fallback():
+            return await fetch_fallback_metrics(self._settings.allowed_symbols)
         try:
-            return await fetch_bulk(self)
+            result = await fetch_bulk(self)
+            if self._use_public_fallback and not result.get("rows"):
+                self._mark_fallback()
+                return await fetch_fallback_metrics(self._settings.allowed_symbols)
+            return result
         except MarketDataError:
             if self._use_public_fallback:
+                self._mark_fallback()
                 return await fetch_fallback_metrics(self._settings.allowed_symbols)
             raise
 
     async def fetch_derivatives(self, symbol: str) -> dict:
         from app.adapters.metrics import fetch_derivatives
+        if self._prefer_fallback():
+            return {
+                "symbol": symbol,
+                "fetched_at": datetime.now(UTC).isoformat(),
+                "limitations": ["Derivatives detail unavailable from fallback public provider."],
+            }
         try:
             return await fetch_derivatives(self, symbol)
         except MarketDataError:
             if self._use_public_fallback:
+                self._mark_fallback()
                 return {
                     "symbol": symbol,
                     "fetched_at": datetime.now(UTC).isoformat(),
@@ -166,6 +193,8 @@ class BinanceUSDMAdapter:
         return await fetch_funding_history(self, query)
 
     async def fetch_candles(self, query: CandleQuery) -> CandleResponse:
+        if self._prefer_fallback():
+            return await fetch_fallback_candles(query)
         params = {"symbol": query.symbol, "interval": query.timeframe, "limit": str(query.limit)}
         if query.start_time is not None:
             params["startTime"] = str(query.start_time)
@@ -190,6 +219,7 @@ class BinanceUSDMAdapter:
                                   server_time=estimated_time, candles=candles, quality=quality, next_start_time=next_time)
         except MarketDataError:
             if self._use_public_fallback:
+                self._mark_fallback()
                 return await fetch_fallback_candles(query)
             raise
 

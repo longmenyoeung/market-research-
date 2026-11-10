@@ -139,6 +139,23 @@ def test_combined_news_and_technicals_buy_and_sell_plans(settings):
 
 def test_5m_and_4h_indicator_context_plans():
     from app.schemas.indicator_study import higher_context
+    from app.adapters.public_fallback import continuous_tail, fallback_discovery
 
     assert higher_context("5m") == ["1h", "4h"]
     assert higher_context("4h") == ["1d"]
+
+    disc = fallback_discovery(["XAUTUSDT", "BTCUSDT", "ETHUSDT"])
+    assert [c.symbol for c in disc.contracts] == ["BTCUSDT", "ETHUSDT", "XAUTUSDT"]
+
+    def make_bar(open_ms: int) -> Candle:
+        return Candle(
+            open_time=open_ms, close_time=open_ms + 300_000 - 1,
+            open=100, high=101, low=99, close=100,
+            volume=10, quote_volume=1000, trades=10,
+            taker_buy_volume=5, taker_buy_quote_volume=500, is_closed=True,
+        )
+
+    gapped = [make_bar(0), make_bar(300_000), make_bar(900_000), make_bar(1_200_000), make_bar(1_500_000)]
+    tail = continuous_tail(gapped, 300_000)
+    assert [c.open_time for c in tail] == [900_000, 1_200_000, 1_500_000]
+

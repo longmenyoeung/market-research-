@@ -1,4 +1,4 @@
-"""Read-only public market-data fallback (Gate.io USDT Futures & OKX Swap) when Binance USDM is geo-blocked or rate-limited on cloud hosts."""
+"""Read-only public market-data fallback (Gate.io USDT Futures, OKX Swap & Binance Vision) when Binance USDM is geo-blocked or rate-limited on cloud hosts."""
 
 from datetime import UTC, datetime
 import logging
@@ -23,6 +23,12 @@ OKX_INST_IDS = {
     "ETHUSDT": "ETH-USDT-SWAP",
 }
 
+BINANCE_VISION_SYMBOLS = {
+    "XAUTUSDT": "PAXGUSDT",
+    "BTCUSDT": "BTCUSDT",
+    "ETHUSDT": "ETHUSDT",
+}
+
 GATE_INTERVALS = {
     "1m": "1m",
     "5m": "5m",
@@ -44,6 +50,20 @@ OKX_INTERVALS = {
     "1d": "1Dutc",
     "1w": "1Wutc",
 }
+
+
+def continuous_tail(candles: list[Candle], duration: int) -> list[Candle]:
+    """Return the latest strictly contiguous suffix of candles (no missing intervals)."""
+    if len(candles) <= 1:
+        return candles
+    ordered = sorted(candles, key=lambda bar: bar.open_time)
+    start_idx = 0
+    for idx in range(len(ordered) - 1, 0, -1):
+        if ordered[idx].open_time - ordered[idx - 1].open_time != duration:
+            start_idx = idx
+            break
+    return ordered[start_idx:]
+
 
 FALLBACK_CONTRACTS = [
     Contract(
@@ -169,6 +189,42 @@ async def fetch_fallback_metrics(allowed_symbols: list[str]) -> dict:
             except httpx.HTTPError as exc:
                 logger.warning("OKX fallback metrics failed: %s", exc)
 
+        # 3. Try Binance Vision Public Data CDN (AWS CloudFront, global access) for any remaining symbol
+        missing = [sym for sym in target if sym not in rows]
+        if missing:
+            for sym in missing:
+                vision_sym = BINANCE_VISION_SYMBOLS.get(sym, sym)
+                try:
+                    resp = await client.get(
+                        "https://data-api.binance.vision/api/v3/ticker/24hr",
+                        params={"symbol": vision_sym},
+                    )
+                    if resp.status_code != 200 or not isinstance(resp.json(), dict):
+                        continue
+                    item = resp.json()
+                    last_p = float(item.get("lastPrice") or 0)
+                    if last_p <= 0:
+                        continue
+                    bid = float(item.get("bidPrice") or last_p * 0.9999)
+                    ask = float(item.get("askPrice") or last_p * 1.0001)
+                    spread = (ask - bid) / ((ask + bid) / 2) * 10000 if 0 < bid <= ask else 1.5
+                    rows[sym] = {
+                        "last_price": last_p,
+                        "mark_price": last_p,
+                        "index_price": last_p,
+                        "bid": bid,
+                        "ask": ask,
+                        "spread_bps": spread,
+                        "volume": max(float(item.get("quoteVolume") or 0.0), 5_000_000.0),
+                        "change_percent": float(item.get("priceChangePercent") or 0.0),
+                        "funding_rate": 0.0001,
+                        "book_time": now_ms,
+                        "ticker_time": now_ms,
+                        "mark_time": now_ms,
+                    }
+                except httpx.HTTPError as exc:
+                    logger.warning("Binance Vision fallback metrics failed for %s: %s", sym, exc)
+
     if not rows:
         raise MarketDataError("upstream_unavailable", "All public market-data providers are unreachable.", 502)
 
@@ -185,6 +241,7 @@ async def fetch_fallback_candles(query: CandleQuery) -> CandleResponse:
     duration = INTERVAL_MS[timeframe]
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
     candles: list[Candle] = []
+    min_needed = min(query.limit, 250)
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(12.0), follow_redirects=True) as client:
         # 1. Try Gate.io USDT Perpetual Candlesticks (supports up to 1000 bars in one request)
@@ -227,14 +284,14 @@ async def fetch_fallback_candles(query: CandleQuery) -> CandleResponse:
                             taker_buy_quote_volume=round(qv * 0.5, 2),
                             is_closed=close_time < now_ms,
                         )
-                    candles = sorted(by_open.values(), key=lambda bar: bar.open_time)[-query.limit :]
+                    candles = continuous_tail(list(by_open.values()), duration)[-query.limit :]
             except Exception as exc:
                 logger.warning("Gate.io fallback candles failed for %s %s: %s", symbol, timeframe, exc)
 
-        # 2. Try OKX Perpetual Swap Candles if Gate.io returned empty or gapped data
+        # 2. Try OKX Perpetual Swap Candles if Gate.io returned empty or fewer than min_needed continuous bars
         okx_inst = OKX_INST_IDS.get(symbol)
         okx_bar = OKX_INTERVALS.get(timeframe)
-        if (len(candles) < min(query.limit, 250)) and okx_inst and okx_bar:
+        if len(candles) < min_needed and okx_inst and okx_bar:
             try:
                 by_open_okx: dict[int, Candle] = {}
                 after_cursor: str | None = None
@@ -282,10 +339,54 @@ async def fetch_fallback_candles(query: CandleQuery) -> CandleResponse:
                     after_cursor = str(oldest_ts)
                     if len(by_open_okx) >= query.limit:
                         break
-                if len(by_open_okx) > len(candles):
-                    candles = sorted(by_open_okx.values(), key=lambda bar: bar.open_time)[-query.limit :]
+                okx_candles = continuous_tail(list(by_open_okx.values()), duration)[-query.limit :]
+                if len(okx_candles) > len(candles):
+                    candles = okx_candles
             except Exception as exc:
                 logger.warning("OKX fallback candles failed for %s %s: %s", symbol, timeframe, exc)
+
+        # 3. Try Binance Vision Public Data CDN (AWS CloudFront, global access, up to 1000 bars per call)
+        vision_symbol = BINANCE_VISION_SYMBOLS.get(symbol, symbol)
+        if len(candles) < min_needed and vision_symbol:
+            try:
+                params_vision: dict[str, str] = {
+                    "symbol": vision_symbol,
+                    "interval": timeframe,
+                    "limit": str(min(query.limit, 1000)),
+                }
+                resp = await client.get("https://data-api.binance.vision/api/v3/klines", params=params_vision)
+                if resp.status_code == 200 and isinstance(resp.json(), list) and resp.json():
+                    by_open_vision: dict[int, Candle] = {}
+                    for item in resp.json():
+                        if not isinstance(item, list) or len(item) < 11:
+                            continue
+                        open_time = (int(item[0]) // duration) * duration
+                        close_time = open_time + duration - 1
+                        o = float(item[1])
+                        h = float(item[2])
+                        l = float(item[3])
+                        c = float(item[4])
+                        v = float(item[5])
+                        qv = float(item[7])
+                        by_open_vision[open_time] = Candle(
+                            open_time=open_time,
+                            close_time=close_time,
+                            open=o,
+                            high=max(h, o, c),
+                            low=min(l, o, c),
+                            close=c,
+                            volume=round(v, 4),
+                            quote_volume=round(qv, 2),
+                            trades=max(1, int(item[8])),
+                            taker_buy_volume=round(float(item[9]), 4),
+                            taker_buy_quote_volume=round(float(item[10]), 2),
+                            is_closed=close_time < now_ms,
+                        )
+                    vision_candles = continuous_tail(list(by_open_vision.values()), duration)[-query.limit :]
+                    if len(vision_candles) > len(candles):
+                        candles = vision_candles
+            except Exception as exc:
+                logger.warning("Binance Vision fallback candles failed for %s %s: %s", symbol, timeframe, exc)
 
     if not candles:
         raise MarketDataError("upstream_unavailable", f"Unable to load public candles for {symbol} {timeframe}.", 502)
@@ -300,3 +401,5 @@ async def fetch_fallback_candles(query: CandleQuery) -> CandleResponse:
         quality=quality,
         next_start_time=None,
     )
+
+

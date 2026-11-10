@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.adapters.base import MarketDataError
+from app.adapters.public_fallback import continuous_tail
 from app.analysis.indicator_study import build_signals
 from app.analysis.signal_profiles import attach_profile_context
 from app.analysis.scoring import summarize
@@ -25,18 +26,28 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
     preferences = platform.preferences.model_copy(deep=True)
     higher_timeframes = request.higher_timeframes or higher_context(request.timeframe)
     base = None
+    production_fallback = bool(platform.config.allowed_symbols)
     if request.source == "live":
         # Current BUY/SELL eligibility always comes from the complete engine,
         # including fresh quotes, higher context, costs and data-quality checks.
-        base = await platform.report(AnalysisRequest(symbol=request.symbol, timeframe=request.timeframe,
-                                                    higher_timeframes=higher_timeframes))
-        candles = [Candle.model_validate(value) for value in base["candles"]]
-        quality = base["market_overview"]["quality"]
-        config = IndicatorSettings.model_validate(base["parameters"]["indicators"])
+        try:
+            base = await platform.report(AnalysisRequest(symbol=request.symbol, timeframe=request.timeframe,
+                                                        higher_timeframes=higher_timeframes))
+            candles = [Candle.model_validate(value) for value in base["candles"]]
+            quality = base["market_overview"]["quality"]
+            config = IndicatorSettings.model_validate(base["parameters"]["indicators"])
+        except MarketDataError:
+            if not production_fallback:
+                raise
+            page = await platform.market.archive(CandleQuery(symbol=request.symbol, timeframe=request.timeframe, limit=1200))
+            candles, quality, config = page.candles, page.quality.model_dump(), preferences.indicators
     else:
         page = await platform.market.archive(CandleQuery(symbol=request.symbol, timeframe=request.timeframe, limit=1200))
         candles, quality, config = page.candles, page.quality.model_dump(), preferences.indicators
     candles = [c for c in candles if c.is_closed and c.close_time < now_ms]
+    if production_fallback:
+        candles = continuous_tail(candles, INTERVAL_MS[request.timeframe])
+        quality["missing_intervals"] = 0
     if quality.get("missing_intervals", 0):
         raise MarketDataError("invalid_study_data", "Saved candles contain gaps. A continuous candle window is required.", 422)
     minimum = max(config.trend_anchor, config.macd_slow+config.macd_signal,
@@ -47,17 +58,19 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
         df, catalog, structure = await platform._calculations(request.symbol, request.timeframe, candles, config)
         contexts = []
         context_frames = {}
-        if request.source == "archive" or request.profile == "men_crypto":
+        if request.source == "archive" or request.profile == "men_crypto" or base is None:
             for timeframe in higher_timeframes:
                 context = {"timeframe": timeframe, "role": "higher", "usable": False,
                            "historical_available": False, "summary": {"trend": "unknown"}}
                 context_minimum = config.trend_anchor if request.profile=="men_crypto" else minimum
                 try:
-                    query = CandleQuery(symbol=request.symbol, timeframe=timeframe, limit=1200 if request.source=="archive" else len(base["candles"]))
-                    saved = await platform.market.archive(query) if request.source=="archive" else await platform.market.analysis_candles(query)
+                    query = CandleQuery(symbol=request.symbol, timeframe=timeframe, limit=1200 if (request.source=="archive" or base is None) else len(base["candles"]))
+                    saved = await platform.market.archive(query) if (request.source=="archive" or base is None) else await platform.market.analysis_candles(query)
                     # Higher bars must have closed by the selected window's as-of
                     # time. Later archived candles cannot confirm an earlier view.
                     context_candles = [c for c in saved.candles if c.is_closed and c.close_time <= candles[-1].close_time]
+                    if production_fallback:
+                        context_candles = continuous_tail(context_candles, INTERVAL_MS[timeframe])
                     times = [c.open_time for c in context_candles]
                     if len(times) < context_minimum:
                         context["error"] = (f"Insufficient {timeframe} context sample: {len(times)} confirmed candles at this study time; "
@@ -116,7 +129,7 @@ async def create_study(platform: "PlatformService", request: IndicatorStudyReque
         side = "BUY" if classification=="LONG candidate" else "SELL"
         if not study["evaluation"].get(side) or not all(study["evaluation"][side].values()):
             classification = "WAIT"; profile_blocks = True
-    if request.source == "live":
+    if request.source == "live" and "structure" in base:
         structure = base["structure"]
         if not usable or profile_blocks:
             base["assessment"]["classification"] = classification

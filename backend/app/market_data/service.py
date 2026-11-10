@@ -4,6 +4,7 @@ from collections import OrderedDict
 import logging
 
 from app.adapters.base import MarketDataError, MarketDataProvider
+from app.adapters.public_fallback import continuous_tail
 from app.core.config import Settings
 from app.market_data.cache import AsyncTTLCache
 from app.market_data.discovery import DiscoveryLoader
@@ -34,7 +35,14 @@ class MarketDataService:
         return result.value.model_copy(update={"cache_hit": result.hit, "cache_age_seconds": result.age_seconds})
 
     async def require_symbol(self, symbol: str) -> None:
-        universe = await self.discover_contracts()
+        if self.allowed_symbols and symbol not in self.allowed_symbols:
+            raise MarketDataError("unknown_contract", "Symbol is not an active USDT-margined perpetual contract.", 404)
+        try:
+            universe = await self.discover_contracts()
+        except MarketDataError:
+            if self.allowed_symbols and symbol in self.allowed_symbols:
+                return
+            raise
         if not any(contract.symbol == symbol for contract in universe.contracts):
             raise MarketDataError("unknown_contract", "Symbol is not an active USDT-margined perpetual contract.", 404)
 
@@ -107,18 +115,24 @@ class MarketDataService:
 
     async def archive(self, query: CandleQuery) -> StoredCandles:
         candles = await self.repository.read(query)
-        if not candles and self.allowed_symbols and query.symbol in self.allowed_symbols:
-            try:
-                await self.get_candles(
-                    CandleQuery(
-                        symbol=query.symbol,
-                        timeframe=query.timeframe,
-                        limit=min(1000, max(query.limit, 600)),
+        duration = INTERVAL_MS[query.timeframe]
+        if self.allowed_symbols and query.symbol in self.allowed_symbols:
+            candles = continuous_tail(candles, duration)
+            min_required = min(query.limit, 250)
+            if len(candles) < min_required:
+                try:
+                    fresh = await self.get_candles(
+                        CandleQuery(
+                            symbol=query.symbol,
+                            timeframe=query.timeframe,
+                            limit=min(1000, max(query.limit, 600)),
+                        )
                     )
-                )
-                candles = await self.repository.read(query)
-            except MarketDataError:
-                candles = []
+                    reloaded = continuous_tail(await self.repository.read(query), duration)
+                    closed_fresh = continuous_tail([c for c in fresh.candles if c.is_closed], duration)[-query.limit :]
+                    candles = reloaded if len(reloaded) >= len(closed_fresh) else closed_fresh
+                except MarketDataError as exc:
+                    logger.warning("Archive auto-backfill failed for %s %s: %s", query.symbol, query.timeframe, exc)
         quality = assess_quality(candles, query, int(datetime.now(UTC).timestamp() * 1000))
         quality.status = "historical" if candles and not quality.missing_intervals else "incomplete" if candles else "empty"
         quality.warnings.append("Local archive only; coverage may be partial and this is not live data.")
