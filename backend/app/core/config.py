@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -58,6 +59,9 @@ class Settings(BaseSettings):
     def no_wildcard_origins(cls, value: list[str]) -> list[str]:
         if not value or any(origin == "*" or not origin.startswith(("http://", "https://")) for origin in value):
             raise ValueError("Browser origins must be explicit http(s) URLs; wildcards are not allowed.")
+        render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+        if render_url and render_url.startswith(("http://", "https://")) and render_url not in value:
+            return [*value, render_url]
         return value
 
     @field_validator("allowed_hosts")
@@ -65,6 +69,9 @@ class Settings(BaseSettings):
     def explicit_hosts(cls,value: list[str]) -> list[str]:
         if not value or any(not host or any(c in host for c in '*/\\@?# ') for host in value):
             raise ValueError("Use explicit hostnames or IPs; wildcard/URL hosts are not allowed.")
+        render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+        if render_host and not any(c in render_host for c in '*/\\@?# ') and render_host not in value:
+            return [*value, render_host]
         return value
 
     @field_validator("api_key")

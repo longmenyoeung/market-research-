@@ -12,6 +12,11 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.adapters.base import MarketDataError
+from app.adapters.public_fallback import (
+    fallback_discovery,
+    fetch_fallback_candles,
+    fetch_fallback_metrics,
+)
 from app.core.config import Settings
 from app.core.safety import EXCHANGE_INFO_URL, KLINES_URL, SERVER_TIME_URL, enforce_public_request
 from app.schemas.markets import Contract, DiscoveryResponse
@@ -96,6 +101,7 @@ class BinanceUSDMAdapter:
 
     def __init__(self, settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._settings = settings
+        self._use_public_fallback = transport is None and bool(settings.allowed_symbols)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.request_timeout_seconds),
             limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
@@ -116,7 +122,12 @@ class BinanceUSDMAdapter:
         await self._client.aclose()
 
     async def discover_contracts(self) -> DiscoveryResponse:
-        payload = await self._read(EXCHANGE_INFO_URL)
+        try:
+            payload = await self._read(EXCHANGE_INFO_URL)
+        except MarketDataError:
+            if self._use_public_fallback:
+                return fallback_discovery(self._settings.allowed_symbols)
+            raise
         contracts = parse_contracts(payload)
         if self._settings.allowed_symbols:
             allowed = set(self._settings.allowed_symbols)
@@ -130,11 +141,25 @@ class BinanceUSDMAdapter:
 
     async def fetch_metrics(self) -> dict:
         from app.adapters.metrics import fetch_bulk
-        return await fetch_bulk(self)
+        try:
+            return await fetch_bulk(self)
+        except MarketDataError:
+            if self._use_public_fallback:
+                return await fetch_fallback_metrics(self._settings.allowed_symbols)
+            raise
 
     async def fetch_derivatives(self, symbol: str) -> dict:
         from app.adapters.metrics import fetch_derivatives
-        return await fetch_derivatives(self, symbol)
+        try:
+            return await fetch_derivatives(self, symbol)
+        except MarketDataError:
+            if self._use_public_fallback:
+                return {
+                    "symbol": symbol,
+                    "fetched_at": datetime.now(UTC).isoformat(),
+                    "limitations": ["Derivatives detail unavailable from fallback public provider."],
+                }
+            raise
 
     async def fetch_funding_history(self, query: FundingQuery) -> list[dict]:
         from app.adapters.funding import fetch_funding_history
@@ -146,22 +171,27 @@ class BinanceUSDMAdapter:
             params["startTime"] = str(query.start_time)
         if query.end_time is not None:
             params["endTime"] = str(query.end_time)
-        # Sample before fetching: a candle must already be closed at this point
-        # to be considered confirmed, even if the HTTP request crosses a boundary.
-        server_time = await self._exchange_clock()
-        clock_received = time.monotonic()
-        payload = await self._read(KLINES_URL, params)
-        fetched_at = datetime.now(UTC)
-        estimated_time = server_time + int((time.monotonic() - clock_received) * 1000)
-        candles = parse_candles(payload, query, estimated_time)
-        candles = [c.model_copy(update={"is_closed": c.close_time < server_time}) for c in candles]
-        quality = assess_quality(candles, query, estimated_time)
-        next_time = candles[-1].open_time + INTERVAL_MS[query.timeframe] if candles else None
-        if (len(candles) < query.limit or (candles and not candles[-1].is_closed)
-                or (query.end_time is not None and next_time is not None and next_time > query.end_time)):
-            next_time = None
-        return CandleResponse(symbol=query.symbol, timeframe=query.timeframe, fetched_at=fetched_at,
-                              server_time=estimated_time, candles=candles, quality=quality, next_start_time=next_time)
+        try:
+            # Sample before fetching: a candle must already be closed at this point
+            # to be considered confirmed, even if the HTTP request crosses a boundary.
+            server_time = await self._exchange_clock()
+            clock_received = time.monotonic()
+            payload = await self._read(KLINES_URL, params)
+            fetched_at = datetime.now(UTC)
+            estimated_time = server_time + int((time.monotonic() - clock_received) * 1000)
+            candles = parse_candles(payload, query, estimated_time)
+            candles = [c.model_copy(update={"is_closed": c.close_time < server_time}) for c in candles]
+            quality = assess_quality(candles, query, estimated_time)
+            next_time = candles[-1].open_time + INTERVAL_MS[query.timeframe] if candles else None
+            if (len(candles) < query.limit or (candles and not candles[-1].is_closed)
+                    or (query.end_time is not None and next_time is not None and next_time > query.end_time)):
+                next_time = None
+            return CandleResponse(symbol=query.symbol, timeframe=query.timeframe, fetched_at=fetched_at,
+                                  server_time=estimated_time, candles=candles, quality=quality, next_start_time=next_time)
+        except MarketDataError:
+            if self._use_public_fallback:
+                return await fetch_fallback_candles(query)
+            raise
 
     def ensure_available(self) -> None:
         if self._access_blocked:

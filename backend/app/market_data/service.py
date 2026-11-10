@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 class MarketDataService:
     def __init__(self, provider: MarketDataProvider, repository: CandleRepository, settings: Settings) -> None:
         self.provider, self.repository = provider, repository
+        self.allowed_symbols = set(settings.allowed_symbols)
         self.closed_candle_listeners: list[Callable[[str, str], None]] = []
         self.analysis_windows: OrderedDict[tuple, CandleResponse] = OrderedDict()
         self.analysis_dirty: set[tuple[str,str]] = set()
@@ -106,6 +107,18 @@ class MarketDataService:
 
     async def archive(self, query: CandleQuery) -> StoredCandles:
         candles = await self.repository.read(query)
+        if not candles and self.allowed_symbols and query.symbol in self.allowed_symbols:
+            try:
+                await self.get_candles(
+                    CandleQuery(
+                        symbol=query.symbol,
+                        timeframe=query.timeframe,
+                        limit=min(1000, max(query.limit, 600)),
+                    )
+                )
+                candles = await self.repository.read(query)
+            except MarketDataError:
+                candles = []
         quality = assess_quality(candles, query, int(datetime.now(UTC).timestamp() * 1000))
         quality.status = "historical" if candles and not quality.missing_intervals else "incomplete" if candles else "empty"
         quality.warnings.append("Local archive only; coverage may be partial and this is not live data.")

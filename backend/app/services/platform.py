@@ -525,7 +525,8 @@ class PlatformService:
         selected = [r for r in rows if passes(r)]
         known = [r for r in selected if r.get(filters.sort) is not None]; missing = [r for r in selected if r.get(filters.sort) is None]
         known.sort(key=lambda r:r[filters.sort], reverse=filters.descending)
-        return {**state, "rows": known+missing, "universe_symbols": [r["symbol"] for r in rows],
+        universe_symbols = [r["symbol"] for r in rows] or (list(self.config.allowed_symbols) if self.config.allowed_symbols else [])
+        return {**state, "rows": known+missing, "universe_symbols": universe_symbols,
                 "displayed": len(selected), "overview": overview,
                 "notice": "All eligible contracts appear by default. Experimental scores are not probabilities. Older scan rows are downgraded to NO TRADE."}
 
