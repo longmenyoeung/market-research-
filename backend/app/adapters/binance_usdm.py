@@ -118,6 +118,9 @@ class BinanceUSDMAdapter:
     async def discover_contracts(self) -> DiscoveryResponse:
         payload = await self._read(EXCHANGE_INFO_URL)
         contracts = parse_contracts(payload)
+        if self._settings.allowed_symbols:
+            allowed = set(self._settings.allowed_symbols)
+            contracts = [c for c in contracts if c.symbol in allowed]
         for limit in payload.get("rateLimits") or []:
             if not isinstance(limit,dict): continue
             if (limit.get("rateLimitType")=="REQUEST_WEIGHT" and limit.get("interval")=="MINUTE"

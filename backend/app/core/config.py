@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     stream_queue_size: int = Field(default=32, ge=1, le=256)
     stream_reconnect_seconds: float = Field(default=1, ge=0.1, le=60)
     websocket_origins: list[str] = ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:5173", "http://localhost:5173"]
+    allowed_symbols: list[str] = ["XAUTUSDT", "BTCUSDT", "ETHUSDT"]
 
     @field_validator("trading_enabled", mode="before")
     @classmethod

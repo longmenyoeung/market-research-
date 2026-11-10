@@ -8,6 +8,14 @@ ELIGIBILITY_NOTICE = (
     "has not been verified. Public-data access does not establish legal or account eligibility."
 )
 
+FOCUSED_SYMBOLS: tuple[str, ...] = ("XAUTUSDT", "BTCUSDT", "ETHUSDT")
+
+ASSET_METADATA: dict[str, dict[str, str]] = {
+    "XAUTUSDT": {"name": "មាស / Gold", "short": "GOLD", "khmer": "មាស", "symbol": "XAUTUSDT", "base_asset": "XAUT"},
+    "BTCUSDT": {"name": "Bitcoin", "short": "BTC", "khmer": "ប៊ីតខوين", "symbol": "BTCUSDT", "base_asset": "BTC"},
+    "ETHUSDT": {"name": "Ethereum", "short": "ETH", "khmer": "អ៊ីធើរៀម", "symbol": "ETHUSDT", "base_asset": "ETH"},
+}
+
 
 class Contract(BaseModel):
     model_config = ConfigDict(frozen=True)

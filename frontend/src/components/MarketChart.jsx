@@ -3,17 +3,23 @@ import {createChart,CandlestickSeries,LineSeries,HistogramSeries,createSeriesMar
 import {Empty} from './Common.jsx';
 import {price} from '../api.js';
 import {selectPlanOverlays} from '../planOverlay.js';
-import {studyDrawings} from '../studyDrawings.js';
+import {studyDrawings,entryDrawings,selectedStudySignal} from '../studyDrawings.js';
 import {chartPriceFormat} from '../chartPrecision.js';
 import './MarketChartPlan.css';
 
 const palette=['#58d8ae','#e6b66a','#8c9eff','#53b9dc','#ce82d9','#ed8d87'];
-export default function MarketChart({report,liveCandle,studySignalId}) {
+export default function MarketChart({report,liveCandle,studySignalId,entrySignal}) {
   const host=useRef(null), svg=useRef(null), chartRef=useRef(null), [overlays,setOverlays]=useState(['ema_20','ema_50','ema_200','bb_upper','bb_lower','vwap']);
   const viewport=useRef(null);
   const [groups,setGroups]=useState(['swing','structure','zone','trendline','fvg','previous_period']),[planMode,setPlanMode]=useState('both');
   const isStudy=Boolean(report?.indicator_study);
-  const studyLines=studyDrawings(report,studySignalId);
+  // Current entry (live, fresh, latest confirmed candle) takes precedence over the selected past signal:
+  // the same signal is drawn once as an entry; a different selected past signal keeps its lines but not its regions.
+  const entryLines=isStudy?entryDrawings(report,entrySignal):[];
+  const entryId=entryLines.length?entrySignal.id:null;
+  const pastLines=studyDrawings(report,studySignalId);
+  const pastId=selectedStudySignal(report,studySignalId)?.id;
+  const studyLines=entryId?(pastId===entryId?[]:pastLines.filter(a=>!a.region)):pastLines;
   const plans=selectPlanOverlays(report,planMode);
   const seriesNames=Object.keys(report?.series||{}).filter(n=>/^(ema_|sma_|bb_|vwap|supertrend|psar|ichimoku_|keltner_|donchian_)/.test(n));
   const toggle=(setter,current,name)=>setter(current.includes(name)?current.filter(v=>v!==name):[...current,name]);
@@ -22,7 +28,7 @@ export default function MarketChart({report,liveCandle,studySignalId}) {
     const marketKey=`${report.symbol}:${report.timeframe}`;
     const priceFormat=chartPriceFormat(report.candles,report.market_overview?.constraints?.tick_size);
     const chart=createChart(host.current,{autoSize:true,height:760,layout:{background:{color:'#101820'},textColor:'#8e9da9',fontFamily:'Inter, system-ui, sans-serif',fontSize:11,attributionLogo:true},grid:{vertLines:{color:'#1b2630'},horzLines:{color:'#1b2630'}},rightPriceScale:{borderColor:'#28343f'},timeScale:{borderColor:'#28343f',timeVisible:true},crosshair:{mode:0}});
-    const planPrices=[...(isStudy?[]:plans.annotations),...studyLines].flatMap(a=>a.points.map(point=>point.price));
+    const planPrices=[...(isStudy?[]:plans.annotations),...studyLines,...entryLines].flatMap(a=>a.points.map(point=>point.price));
     const candles=chart.addSeries(CandlestickSeries,{priceFormat,upColor:'#53cfa4',downColor:'#e87878',borderVisible:false,wickUpColor:'#53cfa4',wickDownColor:'#e87878',
       autoscaleInfoProvider:original=>{const info=original();if(info&&planPrices.length){info.priceRange.minValue=Math.min(info.priceRange.minValue,...planPrices);info.priceRange.maxValue=Math.max(info.priceRange.maxValue,...planPrices);}return info;}});
     candles.setData(report.candles.map(c=>({time:c.open_time/1000,open:Number(c.open),high:Number(c.high),low:Number(c.low),close:Number(c.close)})));
@@ -35,9 +41,13 @@ export default function MarketChart({report,liveCandle,studySignalId}) {
     }
     if(report.series?.macd_hist?.length){const s=chart.addSeries(HistogramSeries,{priceFormat,priceLineVisible:false,lastValueVisible:false},3);s.setData(report.series.macd_hist.map(d=>({...d,color:d.value>=0?'#286252':'#663b43'})));}
     chart.panes().forEach((pane,i)=>pane.setStretchFactor(i===0?4.4:i===1?0.7:1));
-    const annotations=[...(report.structure?.annotations||[]).filter(a=>a.kind!=='plan'&&(a.kind==='study_signal'||groups.includes(a.kind))),...(isStudy?[]:plans.annotations),...studyLines];
-    const marks=annotations.filter(a=>['swing','pattern','sweep','study_signal'].includes(a.kind)&&a.points?.length).map(a=>({time:a.points[0].time/1000,position:a.kind==='study_signal'?(a.label.includes('BUY')?'belowBar':'aboveBar'):a.label.includes('H')?'aboveBar':'belowBar',shape:a.kind==='study_signal'?(a.label.includes('BUY')?'arrowUp':'arrowDown'):'circle',size:a.kind==='study_signal'?1:0.5,color:a.kind==='study_signal'?(a.label.includes('BUY')?'#58d8ae':'#e87878'):a.confirmed?'#a6b8c5':'#e6b66a',text:a.label})).sort((a,b)=>a.time-b.time);
+    const annotations=[...(report.structure?.annotations||[]).filter(a=>a.kind!=='plan'&&(a.kind==='study_signal'?a.id!==entryId:groups.includes(a.kind))),...(isStudy?[]:plans.annotations),...studyLines,...entryLines];
+    const marks=annotations.filter(a=>['swing','pattern','sweep','study_signal'].includes(a.kind)&&a.points?.length).map(a=>({time:a.points[0].time/1000,position:a.kind==='study_signal'?(a.label.includes('BUY')?'belowBar':'aboveBar'):a.label.includes('H')?'aboveBar':'belowBar',shape:a.kind==='study_signal'?(a.label.includes('BUY')?'arrowUp':'arrowDown'):'circle',size:a.kind==='study_signal'?1:0.5,color:a.kind==='study_signal'?(a.label.includes('BUY')?'#58d8ae':'#e87878'):a.confirmed?'#a6b8c5':'#e6b66a',text:a.label}));
+    if(entryId)marks.push({time:entrySignal.time/1000,position:entrySignal.side==='BUY'?'belowBar':'aboveBar',shape:entrySignal.side==='BUY'?'arrowUp':'arrowDown',size:2,color:'#ffd84d',text:`ENTRY ${entrySignal.side}`});
+    marks.sort((a,b)=>a.time-b.time);
     const markers=createSeriesMarkers(candles,marks);
+    const entryStyles={entry:['#f4f6f8',0],stop:['#ff6b6b',2],target:['#4fe3a8',1]};
+    entryLines.filter(a=>!a.region).forEach(a=>{const [color,lineStyle]=entryStyles[a.level];candles.createPriceLine({price:a.points[0].price,color,lineWidth:2,lineStyle,axisLabelVisible:true,title:a.label});});
     annotations.filter(a=>['plan','previous_period','study_level'].includes(a.kind)&&a.points?.length&&!a.region).forEach(a=>{
       const sideColor=a.label.startsWith('SHORT ')?'#d991b9':'#66d6b0';
       const color=a.kind==='study_level'?(a.label.includes('Stop')?'#e6b66a':a.label.includes('BUY')?'#58d8ae':'#e87878'):a.kind==='plan'?(a.label.includes('Stop')?'#e6b66a':sideColor):'#b9a57d';
@@ -58,10 +68,15 @@ export default function MarketChart({report,liveCandle,studySignalId}) {
           const [p,q]=points;const color=a.region==='risk'?'#e87878':a.region==='reward'?'#57caa0':a.region==='entry'?(a.label.startsWith('SHORT ')?'#d991b9':'#66d6b0'):a.kind==='fvg'?'#7e92cc':a.label.toLowerCase().includes('resistance')?'#d08282':'#61baa2';
           if(a.region||['zone','fvg'].includes(a.kind)){
             const x=Math.min(p.x,q.x),y=Math.min(p.y,q.y);
-            add('rect',{x,y,width:Math.max(2,Math.abs(q.x-p.x)),height:Math.max(2,Math.abs(q.y-p.y)),fill:color,opacity:a.filled_as_of_latest_bar?'.05':a.kind==='plan'?'.16':'.12',stroke:color});
+            add('rect',{x,y,width:Math.max(2,Math.abs(q.x-p.x)),height:Math.max(2,Math.abs(q.y-p.y)),fill:color,opacity:a.filled_as_of_latest_bar?'.05':a.kind==='plan'||a.kind==='entry_region'?'.16':'.12',stroke:color});
             if(a.kind==='plan'&&plans.visibleSides.length===1){const label=add('text',{x:x+5,y:y+13,fill:color,'font-size':11,'font-weight':600});label.textContent=a.label;}
           }
           else add('line',{x1:p.x,y1:p.y,x2:q.x,y2:q.y,stroke:color,'stroke-width':1,'stroke-dasharray':a.confirmed?'':'4 3'});
+        });
+        entryLines.filter(a=>!a.region).forEach(a=>{
+          const x=chart.timeScale().timeToCoordinate(a.points[0].time/1000),y=candles.priceToCoordinate(a.points[0].price);
+          if(x===null||y===null)return;
+          const label=add('text',{x:x+10,y:y-3,fill:a.level==='entry'?'#f4f6f8':a.level==='stop'?'#ff6b6b':'#4fe3a8','font-size':11,'font-weight':600,'data-level':a.level});label.textContent=a.label;
         });svg.current.replaceChildren(fragment);
       });
     };
@@ -73,14 +88,14 @@ export default function MarketChart({report,liveCandle,studySignalId}) {
     chartRef.current={chart,candles,volume,lastTime:report.candles.at(-1).open_time/1000,renderAnnotations};
     const currentHost=host.current;
     return()=>{viewport.current={key:marketKey,range:chart.timeScale().getVisibleRange()};cancelAnimationFrame(raf);currentHost.removeEventListener('wheel',renderAnnotations);currentHost.removeEventListener('pointerup',renderAnnotations);markers.detach();chart.remove();chartRef.current=null;};
-  },[report?.id,overlays.join(','),groups.join(','),plans.visibleSides.join(','),studySignalId]);
-  useEffect(()=>{const instance=chartRef.current;if(instance&&liveCandle){const time=liveCandle.open_time/1000;if(time>=instance.lastTime){instance.candles.update({time,open:+liveCandle.open,high:+liveCandle.high,low:+liveCandle.low,close:+liveCandle.close});instance.volume.update({time,value:+liveCandle.volume,color:+liveCandle.close>=+liveCandle.open?'#245d50':'#663c44'});instance.lastTime=time;instance.renderAnnotations();}}},[liveCandle,report?.id,overlays.join(','),groups.join(','),plans.visibleSides.join(','),studySignalId]);
+  },[report?.id,overlays.join(','),groups.join(','),plans.visibleSides.join(','),studySignalId,entryId]);
+  useEffect(()=>{const instance=chartRef.current;if(instance&&liveCandle){const time=liveCandle.open_time/1000;if(time>=instance.lastTime){instance.candles.update({time,open:+liveCandle.open,high:+liveCandle.high,low:+liveCandle.low,close:+liveCandle.close});instance.volume.update({time,value:+liveCandle.volume,color:+liveCandle.close>=+liveCandle.open?'#245d50':'#663c44'});instance.lastTime=time;instance.renderAnnotations();}}},[liveCandle,report?.id,overlays.join(','),groups.join(','),plans.visibleSides.join(','),studySignalId,entryId]);
   if(!report?.candles?.length)return <Empty title="Select a contract for chart analysis">A successful analysis loads actual candles, indicator panels and deterministic annotations.</Empty>;
   return <>
    {report.source==='local_archive'?<p className="muted">Historical candlesticks and volume only. Indicators and automatic drawings require a fresh analysis.</p>:<div className="chart-controls"><details><summary>Indicator overlays ({overlays.length})</summary><div className="check-grid">{seriesNames.map(name=><label key={name}><input type="checkbox" checked={overlays.includes(name)} onChange={()=>toggle(setOverlays,overlays,name)}/>{name}</label>)}</div></details><details><summary>Automatic drawings ({groups.length})</summary><div className="check-grid">{['swing','structure','zone','trendline','sweep','retest','fvg','fibonacci','previous_period','channel','divergence','pattern'].map(name=><label key={name}><input type="checkbox" checked={groups.includes(name)} onChange={()=>toggle(setGroups,groups,name)}/>{name}</label>)}</div></details><small>Price · Volume · RSI · MACD · ATR</small></div>}
    {!isStudy&&<div className="plan-toolbar"><div><strong>Entry, stop & take profit</strong><small>Hypothetical · {report.timeframe} source · select a side for price labels · no order is sent</small></div><div className="plan-modes" role="group" aria-label="Chart scenario drawings">{[['both','Both'],['LONG','LONG'],['SHORT','SHORT'],['off','Hide']].map(([value,label])=><button key={value} type="button" aria-pressed={planMode===value} onClick={()=>setPlanMode(value)}>{label}</button>)}</div></div>}
    {!isStudy&&(plans.visibleSides.length?<div className="plan-legend">{plans.visibleSides.map(side=>{const scenario=report.assessment.scenarios[side];return <div key={side} className={`plan-legend-card ${side.toLowerCase()}`}><strong>{side} · hypothetical</strong><span>Entry {price(scenario.entry)} <small>({scenario.entry_region.map(price).join('–')})</small></span><span>Stop {price(scenario.stop)}</span>{scenario.targets.slice(0,3).map((target,index)=><span key={index}>TP{index+1} {price(target)}</span>)}</div>;})}</div>:<p className="plan-unavailable">{planMode==='off'&&plans.availableSides.length?'Scenario drawings are hidden. Select LONG, SHORT or Both to show them.':plans.reason}</p>)}
-   {isStudy&&<p className="plan-unavailable">Arrows and level lines show past candle conditions. Select a past signal below to change its reference, stop and target drawings. These lines do not establish a current entry.</p>}
+   {isStudy&&<p className="plan-unavailable">{entryId?`The yellow ENTRY ${entrySignal.side} marker is the latest confirmed candle signal. Its entry line is that candle's close used as a reference; a manual fill would occur at the next candle open or later. SL and TP1-TP3 are drawn automatically and clear when the signal is no longer current. Manual decision only; no order is sent.`:'Arrows and level lines show past candle conditions. Select a past signal below to change its reference, stop and target drawings. These lines do not establish a current entry.'}</p>}
    <div className="chart-wrap"><div ref={host} style={{height:760,width:'100%'}}/><svg ref={svg} className="chart-annotations" aria-hidden="true"/></div><p className="chart-credit">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc. · <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView</a>. Provisional drawings and take-profit levels are hypothetical, not predictions or orders.</p>
   </>;
 }

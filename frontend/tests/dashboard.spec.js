@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import fs from 'node:fs';
 const fixture=JSON.parse(fs.readFileSync(new URL('./report.fixture.json',import.meta.url),'utf8'));
 
-async function setup(page,{offline=false,saved=false,keyRequired=false,restQuality='usable',planning=false,liveStudy=false}={}){
+async function setup(page,{offline=false,saved=false,keyRequired=false,restQuality='usable',planning=false,liveStudy=false,currentEntry=false,studyCurrent=null}={}){
  const report=structuredClone(fixture);report.generated_at=new Date().toISOString();report.valid_until_ms=Date.now()+60000;
  if(planning){
   report.market_overview.quality.status='usable';report.assessment.classification='WAIT';
@@ -46,6 +46,13 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
    studyReport.multi_timeframe=[{timeframe:'4h',role:'higher',usable:false,historical_available:true,as_of:report.candles.at(-1).close_time,summary:{trend:'bearish',momentum:'bearish'}}];
    studyReport.indicator_study.profile=request.postDataJSON().profile;
    if(liveStudy&&request.postDataJSON().source==='live')Object.assign(studyReport.indicator_study,{source:'live',historical:false,current_reason:'Synthetic live study for browser testing only.'});
+   if(currentEntry&&request.postDataJSON().source==='live'){
+    // Move the BUY signal onto the latest confirmed candle so it is the current entry.
+    const latest=report.candles.at(-1),reference=Number(latest.close),buy=signals.shift();
+    signals.push(Object.assign(buy,{time:latest.open_time,known_at:latest.close_time,reference,stop:reference-2,targets:[1,2,3].map(r=>reference+2*r)}));
+    studyReport.indicator_study.current_signal='BUY candidate';
+   }
+   if(studyCurrent&&request.postDataJSON().source==='live')studyReport.indicator_study.current_signal=studyCurrent;
    studyReport.paper_tracker={hypothetical_only:true,open_position:null,metrics:{trades:2,net_pnl:3},events:[{kind:'virtual_tp',known_at:report.candles.at(-1).close_time,side:'LONG',price:110}]};
    studyReport.structure.annotations.push(...signals.map(signal=>({id:signal.id,kind:'study_signal',label:`Past ${signal.side}`,timeframe:'1h',confirmed:true,confirmed_at:signal.known_at,points:[{time:signal.time,price:signal.reference}],rule:signal.rule})));
    return route.fulfill({json:studyReport});
@@ -58,6 +65,21 @@ async function setup(page,{offline=false,saved=false,keyRequired=false,restQuali
   if(path==='/api/v1/backtests/test-run/cancel'){backtest={...backtest,status:'cancelled'};return route.fulfill({json:backtest});}
   if(path==='/api/v1/backtests/test-run')return route.fulfill({json:backtest});
   if(path==='/api/v1/notifications')return route.fulfill({json:[]});
+  if(path==='/api/v1/news/scan'){
+   const body=request.method()==='POST'?request.postDataJSON():{};
+   const bearish=(body.custom_headlines||[]).some(h=>h.toLowerCase().includes('plunge')||h.toLowerCase().includes('drop'));
+   const signals=[['XAUTUSDT','មាស / Gold'],['BTCUSDT','Bitcoin'],['ETHUSDT','Ethereum']].map(([sym,name])=>({
+    symbol:sym,name,khmer_name:'មាស',short_name:sym.replace('USDT',''),
+    action:bearish?'SELL':'BUY',alignment:bearish?'STRONG ALIGNMENT (Bearish News + Bearish Chart)':'STRONG ALIGNMENT (Bullish News + Bullish Chart)',
+    combined_score:bearish?-42:48,
+    decision_summary:`${bearish?'SELL':'BUY'} (${name}): Combined news and chart analysis.`,
+    news:{sentiment:bearish?'BEARISH':'BULLISH',score:bearish?-50:55,article_count:2,bullish_count:bearish?0:2,bearish_count:bearish?2:0,neutral_count:0,top_catalysts:[{title:`${name} catalyst headline`,sentiment:bearish?'BEARISH':'BULLISH',score:50,impact:'HIGH',source:'TestRSS',reason:'Catalyst match'}]},
+    technical:{available:true,data_source:'local_archive',timeframe:'1h',last_price:sym==='XAUTUSDT'?2750:sym==='BTCUSDT'?95000:3200,trend:bearish?'bearish':'bullish',rsi:bearish?42:58,macd:bearish?'bearish':'bullish',adx:26},
+    buy_plan:{side:'LONG',entry:100,entry_zone:[99,101],stop:95,targets:[105,110,115],when_to_buy:'Enter BUY near 100 while bullish news holds.'},
+    sell_plan:{side:'SHORT',entry:100,entry_zone:[99,101],stop:105,targets:[95,90,85],when_to_sell:'Enter SELL near 100 while bearish news holds.'}
+   }));
+   return route.fulfill({json:{scanned_at:new Date().toISOString(),timeframe:'1h',focused_symbols:['XAUTUSDT','BTCUSDT','ETHUSDT'],signals,news_items:[{title:'Gold and Bitcoin surge on ETF inflows',matched_assets:['XAUTUSDT','BTCUSDT'],sentiment:bearish?'BEARISH':'BULLISH',score:bearish?-50:55,impact:'HIGH',reason:'Matched catalyst',source:'TestRSS',published_at:new Date().toISOString()}],feed_warnings:[],manual_only:true}});
+  }
   if(path==='/api/v1/planner')return route.fulfill({json:{risk_budget:10,quantity:1.95,notional:195,net_reward_to_risk:1.9,potential_loss:10,potential_profit:19,gross_reward_to_risk:2,violations:[],assumptions:['SYNTHETIC TEST RESULT'],constraint_source:'test fixture',inputs:request.postDataJSON()}});
   return route.fulfill({status:404,json:{error:{message:'Unexpected test request'}}});
  });
@@ -400,4 +422,85 @@ test('evidence replay submits settings and can cancel local calculation',async({
  await expect(page.getByText('test-run')).toBeVisible();
  await page.getByRole('button',{name:'Cancel local simulation'}).click();
  await expect(page.getByText('cancelled',{exact:true})).toBeVisible();
+});
+
+test('live study draws the current confirmed entry with SL and TP levels automatically',async({page})=>{
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await setup(page,{liveStudy:true,currentEntry:true});await page.goto('/#indicator');
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByLabel('Chart market status')).toContainText('REST snapshots - 15s');
+ await expect(page.locator('.indicator-workspace > .provider-banner')).toContainText('BUY candidate');
+ const entry=page.getByTestId('current-entry');
+ await expect(entry).toContainText('Current ENTRY BUY');
+ for(const text of ['Entry reference (signal close)','SL','TP1','TP2','TP3','R ','no order is sent'])await expect(entry).toContainText(text);
+ const labels=page.locator('.chart-annotations text');
+ await expect(labels).toHaveText(['ENTRY BUY (ref close)','SL','TP1','TP2','TP3']);
+ await expect(page.locator('.plan-unavailable')).toContainText('ENTRY BUY marker');
+ await page.locator('.chart-wrap').scrollIntoViewIfNeeded();
+ await page.screenshot({path:'test-results/live-current-entry.png'});
+ expect(errors).toEqual([]);
+});
+
+test('stale live data never draws a current entry',async({page})=>{
+ await setup(page,{liveStudy:true,currentEntry:true});
+ await page.route('**/api/v1/candles?*',route=>route.fulfill({json:{symbol:'TESTUSDT',timeframe:'1h',quality:{status:'stale'},candles:[]}}));
+ await page.goto('/#indicator');
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByText('LIVE STUDY - automatic candle updates')).toBeVisible();
+ await expect(page.getByLabel('Chart market status')).toContainText('REST data stale or incomplete');
+ await expect(page.locator('.indicator-workspace > .provider-banner')).toContainText('NO TRADE');
+ await expect(page.getByTestId('current-entry')).toHaveCount(0);
+ await expect(page.locator('.chart-annotations text')).toHaveCount(0);
+ await expect(page.locator('.plan-unavailable')).toContainText('These lines do not establish a current entry.');
+});
+
+test('a live signal older than the latest confirmed candle is not drawn as an entry',async({page})=>{
+ // The latest stub signal is SELL, closed 20 candles before as_of; only known_at differs from a current entry.
+ await setup(page,{liveStudy:true,studyCurrent:'SELL candidate'});await page.goto('/#indicator');
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ await expect(page.getByLabel('Chart market status')).toContainText('REST snapshots - 15s');
+ await expect(page.locator('.indicator-workspace > .provider-banner')).toContainText('SELL candidate');
+ await expect(page.locator('.plan-unavailable')).toContainText('These lines do not establish a current entry.');
+ await expect(page.getByTestId('current-entry')).toHaveCount(0);
+ await expect(page.locator('.chart-annotations text')).toHaveCount(0);
+});
+
+test('a drawn current entry disappears when the live feed becomes stale',async({page})=>{
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await setup(page,{liveStudy:true,currentEntry:true});
+ let stream;await page.routeWebSocket('**/api/v1/ws/**',socket=>{stream=socket;});
+ await page.goto('/#indicator');
+ await page.getByLabel('Study source').selectOption('live');
+ await page.getByRole('button',{name:'Build indicator chart'}).click();
+ const labels=page.locator('.chart-annotations text');
+ await expect(page.getByTestId('current-entry')).toContainText('Current ENTRY BUY');
+ await expect(labels).toHaveText(['ENTRY BUY (ref close)','SL','TP1','TP2','TP3']);
+ await expect(page.locator('.plan-unavailable')).toContainText('ENTRY BUY marker');
+ await expect.poll(()=>Boolean(stream)).toBe(true);
+ stream.send(JSON.stringify({type:'candle',symbol:'TESTUSDT',timeframe:'1h',event_time:Date.now(),stale:true}));
+ await expect(page.getByLabel('Chart market status')).toContainText('stream stale');
+ await expect(page.locator('.indicator-workspace > .provider-banner')).toContainText('NO TRADE');
+ await expect(page.getByTestId('current-entry')).toHaveCount(0);
+ await expect(labels).toHaveCount(0);
+ await expect(page.locator('.plan-unavailable')).toContainText('These lines do not establish a current entry.');
+ expect(errors).toEqual([]);
+});
+
+test('news bot scanner analyzes Gold, Bitcoin, and ETH news and tells when to BUY and SELL',async({page})=>{
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await setup(page);await page.goto('/');
+ await page.getByRole('button',{name:'News bot scan',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Analyze News Bot Scan · មាស (Gold) · Bitcoin · ETH'})).toBeVisible();
+ for(const sym of ['XAUTUSDT','BTCUSDT','ETHUSDT']){
+  await expect(page.getByTestId(`news-card-${sym}`)).toBeVisible();
+  await expect(page.getByTestId(`signal-action-${sym}`)).toContainText('BUY');
+ }
+ await page.getByRole('button',{name:'Test Bearish News'}).click();
+ for(const sym of ['XAUTUSDT','BTCUSDT','ETHUSDT']){
+  await expect(page.getByTestId(`signal-action-${sym}`)).toContainText('SELL');
+ }
+ expect(errors).toEqual([]);
 });

@@ -69,6 +69,15 @@ The development dashboard opens at http://127.0.0.1:5173 and proxies API/WebSock
 
 ## Use the platform
 
+**Focused 3-Asset Universe & News Bot Scan:** the platform focuses exclusively on
+three contracts—**មាស / Gold (`XAUTUSDT`)**, **Bitcoin (`BTCUSDT`)**, and
+**Ethereum (`ETHUSDT`)**—and removes all other coins from discovery and local
+storage. Open **News bot scan** in the sidebar to scan public crypto/gold RSS
+feeds (or paste custom headlines in English or Khmer) and combine news sentiment
+with technical indicators (EMA trend, RSI, MACD, ADX, support/resistance, and
+ATR) to see when to **BUY** and when to **SELL**, complete with Entry, Stop Loss,
+and 1R/2R/3R Take-Profit reference levels.
+
 **BUY / SELL indicator:** open the new sidebar page to build a chart with
 EMA overlays, RSI/MACD/ATR panels, past BUY/SELL arrows, support/resistance and
 structure drawings. Select a past marker to draw its hypothetical close

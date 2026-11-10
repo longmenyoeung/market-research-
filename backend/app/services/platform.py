@@ -48,6 +48,8 @@ class PlatformService:
         self.revision = 0
 
     async def initialize(self) -> None:
+        if self.config.allowed_symbols:
+            await self.store.purge_unallowed_symbols(self.config.allowed_symbols)
         settings = await self.store.records("scan_settings", limit=1)
         watches = await self.store.records("watchlists", limit=1)
         if settings: self.preferences = Preferences.model_validate(settings[0]["data"])
@@ -58,6 +60,9 @@ class PlatformService:
         if universes:
             universe = universes[0]["data"]
             contracts = universe.get("contracts", [])
+            if self.config.allowed_symbols and isinstance(contracts, list):
+                allowed_set = set(self.config.allowed_symbols)
+                contracts = [c for c in contracts if isinstance(c, dict) and c.get("symbol") in allowed_set]
             if isinstance(contracts, list) and contracts:
                 snapshots = await self.store.records("market_snapshots", limit=1000)
                 timeframe = snapshots[0]["data"].get("timeframe", "1h") if snapshots else "1h"

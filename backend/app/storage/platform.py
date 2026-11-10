@@ -14,8 +14,11 @@ class PlatformRepository(CandleRepository, Protocol):
     async def records(self, table: str, *, symbol: str | None = None,
                       timeframe: str | None = None, limit: int = 100) -> list[dict]: ...
 
+    async def purge_unallowed_symbols(self, allowed_symbols: list[str]) -> None: ...
+
 TABLES = {"scan_settings", "watchlists", "analysis_reports", "indicator_snapshots", "chart_annotations",
-          "market_snapshots", "dashboard_notifications", "backtest_runs", "backtest_results", "market_symbols"}
+          "market_snapshots", "dashboard_notifications", "backtest_runs", "backtest_results", "market_symbols",
+          "news_scans"}
 
 
 class PlatformStore(SQLiteCandleRepository):
@@ -58,3 +61,43 @@ class PlatformStore(SQLiteCandleRepository):
     def _records(self, table: str, symbol: str | None, timeframe: str | None, limit: int) -> list[dict]:
         rows = self._connection().execute(f"SELECT id,created_at,payload FROM {table} WHERE (? IS NULL OR symbol=?) AND (? IS NULL OR timeframe=?) ORDER BY created_at DESC LIMIT ?", (symbol,symbol,timeframe,timeframe,limit)).fetchall()
         return [{"id": row[0], "saved_at": row[1], "data": json.loads(row[2])} for row in rows]
+
+    async def purge_unallowed_symbols(self, allowed_symbols: list[str]) -> None:
+        if not allowed_symbols:
+            return
+        await self._run(self._purge_unallowed_symbols, sorted(set(allowed_symbols)))
+
+    def _purge_unallowed_symbols(self, allowed: list[str]) -> None:
+        placeholders = ",".join("?" for _ in allowed)
+        allowed_set = set(allowed)
+        db = self._connection()
+        with db:
+            db.execute(f"DELETE FROM candle_history WHERE symbol NOT IN ({placeholders})", tuple(allowed))
+            for table in ("market_snapshots", "analysis_reports", "indicator_snapshots",
+                          "chart_annotations", "dashboard_notifications", "backtest_runs", "backtest_results"):
+                db.execute(f"DELETE FROM {table} WHERE symbol IS NOT NULL AND symbol NOT IN ({placeholders})", tuple(allowed))
+            for row_id, payload_str in db.execute("SELECT id, payload FROM market_symbols").fetchall():
+                try:
+                    data = json.loads(payload_str)
+                except ValueError:
+                    continue
+                contracts = data.get("contracts")
+                if isinstance(contracts, list):
+                    filtered = [c for c in contracts if isinstance(c, dict) and c.get("symbol") in allowed_set]
+                    if len(filtered) != len(contracts) or data.get("count") != len(filtered):
+                        data["contracts"] = filtered
+                        data["count"] = len(filtered)
+                        db.execute("UPDATE market_symbols SET payload=? WHERE id=?",
+                                   (json.dumps(data, allow_nan=False, default=str), row_id))
+            for row_id, payload_str in db.execute("SELECT id, payload FROM watchlists").fetchall():
+                try:
+                    data = json.loads(payload_str)
+                except ValueError:
+                    continue
+                symbols = data.get("symbols")
+                if isinstance(symbols, list):
+                    filtered = [s for s in symbols if s in allowed_set]
+                    if filtered != symbols:
+                        data["symbols"] = filtered
+                        db.execute("UPDATE watchlists SET payload=? WHERE id=?",
+                                   (json.dumps(data, allow_nan=False, default=str), row_id))

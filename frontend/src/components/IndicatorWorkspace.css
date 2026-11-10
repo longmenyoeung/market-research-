@@ -6,3 +6,5 @@
 
 .study-options{flex-basis:100%;border:1px solid #2c3d46;padding:12px;border-radius:6px}.study-options summary{cursor:pointer}.study-options .checkbox{margin-top:12px}.study-form .field:has(select[multiple]){min-width:160px}
 .study-live-bar{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #2c3d46}.study-live-bar>div{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.study-live-bar small{color:#8e9da9}.study-live-bar b{font-variant-numeric:tabular-nums;color:#80ebc7}
+
+.study-entry{border-color:#ffd84d;background:#2a2715}.study-entry small{width:100%;color:#c9c08a}

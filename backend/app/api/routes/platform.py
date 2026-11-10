@@ -8,7 +8,9 @@ from app.backtesting.engine import BacktestRequest
 from app.schemas.platform import AnalysisRequest, Preferences, ScanRequest, ScanFilter, Watchlist
 from app.schemas.candles import Timeframe
 from app.schemas.indicator_study import IndicatorStudyRequest
+from app.schemas.news import NewsScanRequest
 from app.services.indicator_study import create_study
+from app.services.news_scanner import get_latest_news_scan, run_news_scan
 from app.services.platform import PlatformService
 
 router=APIRouter(prefix="/api/v1",tags=["analysis platform"])
@@ -52,6 +54,16 @@ async def analysis(body: AnalysisRequest, platform: Annotated[PlatformService,De
 async def indicator_study(body: IndicatorStudyRequest, platform: Annotated[PlatformService,Depends(service)],
                           _: Annotated[None,Depends(require_mutation_access)]) -> dict:
     return await create_study(platform, body)
+
+@router.get("/news/scan")
+async def latest_news_scan(platform: Annotated[PlatformService,Depends(service)],
+                           timeframe: Timeframe = "1h") -> dict:
+    return await get_latest_news_scan(platform, timeframe)
+
+@router.post("/news/scan")
+async def scan_news(body: NewsScanRequest, platform: Annotated[PlatformService,Depends(service)],
+                    _: Annotated[None,Depends(require_mutation_access)]) -> dict:
+    return await run_news_scan(platform, body)
 
 @router.get("/history/reports")
 async def history(platform: Annotated[PlatformService,Depends(service)], symbol: str | None=None,

@@ -100,6 +100,17 @@ volume by its configured rolling mean. See [indicators.md](indicators.md).
 - Select a past signal in the list to change its price lines and risk/reward
   regions. The region spans up to twenty subsequent *observed* chart bars; that
   width is visual and is not a forecast or holding-period assumption.
+- Live studies only: when the latest signal closed on the latest confirmed
+  candle (`known_at == as_of`) and the freshness-gated current signal is the
+  matching `BUY candidate` / `SELL candidate`, the chart automatically draws
+  `ENTRY BUY (ref close)` or `ENTRY SELL (ref close)`, `SL` and `TP1`-`TP3`
+  price lines, the risk/reward regions and a yellow `ENTRY BUY` / `ENTRY SELL`
+  marker on the signal candle in place of its past arrow. The entry line is the
+  signal candle's close used as a reference. A manual fill could only occur at
+  the next candle's open or later. The drawing refreshes with each study
+  refresh and clears when the analysis expires, the feed is stale or a newer
+  candle closes without a matching candidate. A different selected past signal
+  keeps its price lines; the current entry's regions take precedence.
 - Support/resistance zones, confirmed swings, BOS/CHoCH, trendlines and optional
   FVG/Fibonacci/channel drawings reuse the documented structure engine. They
   describe the latest closed study window. Selecting an older marker changes
