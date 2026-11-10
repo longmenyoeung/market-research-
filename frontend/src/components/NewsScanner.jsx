@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowUpRight, Calculator, Newspaper, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowUpRight, BarChart3, Calculator, Newspaper, RefreshCw, Sparkles } from 'lucide-react';
 import { api, post, localTime, number, price, queryString } from '../api.js';
 import { Badge, Busy, Empty, ErrorBox, Field } from './Common.jsx';
 import './NewsScanner.css';
@@ -9,6 +9,8 @@ export const FOCUSED_COINS = [
   { symbol: 'BTCUSDT', label: 'Bitcoin (BTCUSDT)', short: 'Bitcoin · BTC' },
   { symbol: 'ETHUSDT', label: 'Ethereum (ETHUSDT)', short: 'Ethereum · ETH' },
 ];
+
+const NEWS_TIMEFRAMES = ['5m', '15m', '30m', '1h', '4h'];
 
 export function formatCoinLabel(symbol) {
   const found = FOCUSED_COINS.find(c => c.symbol === symbol);
@@ -27,7 +29,7 @@ const SAMPLE_BEARISH_NEWS = [
   'Ethereum falls sharply amid selling pressure and exchange outflow concerns',
 ].join('\n');
 
-export default function NewsScanner({ timeframe, onSelectSymbol, onOpenPlan }) {
+export default function NewsScanner({ timeframe, onTimeframeChange, onSelectSymbol, onOpenIndicator, onOpenPlan }) {
   const [scanData, setScanData] = useState(null);
   const [customText, setCustomText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -103,6 +105,21 @@ export default function NewsScanner({ timeframe, onSelectSymbol, onOpenPlan }) {
               <ArrowUpRight size={14} />
             </button>
           ))}
+          {onTimeframeChange && (
+            <div className="inline" role="group" aria-label="Trading timeframe">
+              {NEWS_TIMEFRAMES.map(tfVal => (
+                <button
+                  key={tfVal}
+                  type="button"
+                  aria-pressed={timeframe === tfVal}
+                  className={timeframe === tfVal ? 'primary' : ''}
+                  onClick={() => onTimeframeChange(tfVal)}
+                >
+                  {tfVal}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="news-input-grid">
@@ -283,9 +300,21 @@ export default function NewsScanner({ timeframe, onSelectSymbol, onOpenPlan }) {
                 </div>
               )}
 
-              <button type="button" onClick={() => onSelectSymbol(sig.symbol)}>
-                Inspect {sig.symbol} Chart <ArrowUpRight size={15} />
-              </button>
+              <div className="inline">
+                <button type="button" onClick={() => onSelectSymbol(sig.symbol)}>
+                  Inspect {sig.symbol} Chart <ArrowUpRight size={15} />
+                </button>
+                {onOpenIndicator && (
+                  <>
+                    <button type="button" onClick={() => onOpenIndicator(sig.symbol, '5m')}>
+                      <BarChart3 size={14} /> 5m Indicator Chart
+                    </button>
+                    <button type="button" onClick={() => onOpenIndicator(sig.symbol, '4h')}>
+                      <BarChart3 size={14} /> 4h Indicator Chart
+                    </button>
+                  </>
+                )}
+              </div>
             </section>
           );
         })}

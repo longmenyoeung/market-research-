@@ -74,71 +74,79 @@ def main() -> None:
         analyzed_items = [analyze_news_item(h, source="initial_scan") for h in headlines]
         preferences = Preferences()
         signals = []
-        for sym in allowed:
-            rows = conn.execute(
-                "SELECT candle_json FROM candle_history WHERE symbol=? AND timeframe='1h' ORDER BY open_time DESC LIMIT 400",
-                (sym,),
-            ).fetchall()
-            candles = sorted((Candle.model_validate_json(r[0]) for r in rows), key=lambda c: c.open_time)
-            if candles:
-                data = frame(candles)
-                df, _cat = calculate(data, preferences.indicators, "1h")
-                shape = analyze_structure(df, "1h", preferences.indicators.swing_window, momentum_period=preferences.indicators.momentum_period)
-                summary = summarize(df, shape, preferences)
-                last = df.iloc[-1]
-                last_price = float(last.close)
-                now_ms = int(candles[-1].close_time)
-                metric = {
-                    "last_price": last_price,
-                    "bid": last_price * 0.9999,
-                    "ask": last_price * 1.0001,
-                    "spread_bps": 2.0,
-                    "volume": 10_000_000.0,
-                    "change_percent": 1.0,
-                    "ticker_time": now_ms,
-                    "book_time": now_ms,
-                }
-                assessment = assess(df, shape, preferences, metric, [], [], True, "1h", as_of_ms=now_ms)
-                tech = {
-                    "available": True,
-                    "data_source": "local_archive",
-                    "timeframe": "1h",
-                    "as_of": now_ms,
-                    "last_price": round(last_price, 2),
-                    "trend": summary.get("trend", "unknown"),
-                    "momentum": summary.get("momentum", "unknown"),
-                    "structure_trend": shape.get("trend", "unknown"),
-                    "rsi": summary.get("rsi"),
-                    "macd": summary.get("macd"),
-                    "adx": summary.get("adx"),
-                    "atr": finite(last.get("atr")),
-                    "vwap": finite(last.get("vwap")),
-                    "support": shape.get("support"),
-                    "resistance": shape.get("resistance"),
-                    "long_score": assessment.get("long_score", 0.0),
-                    "short_score": assessment.get("short_score", 0.0),
-                }
-            else:
-                tech = {"available": False, "data_source": "unavailable", "timeframe": "1h", "last_price": None}
+        for tf in ("5m", "15m", "30m", "1h", "4h"):
+            tf_signals = []
+            for sym in allowed:
+                rows = conn.execute(
+                    "SELECT candle_json FROM candle_history WHERE symbol=? AND timeframe=? ORDER BY open_time DESC LIMIT 400",
+                    (sym, tf),
+                ).fetchall()
+                candles = sorted((Candle.model_validate_json(r[0]) for r in rows), key=lambda c: c.open_time)
+                if candles:
+                    data = frame(candles)
+                    df, _cat = calculate(data, preferences.indicators, tf)
+                    shape = analyze_structure(df, tf, preferences.indicators.swing_window, momentum_period=preferences.indicators.momentum_period)
+                    summary = summarize(df, shape, preferences)
+                    last = df.iloc[-1]
+                    last_price = float(last.close)
+                    now_ms = int(candles[-1].close_time)
+                    metric = {
+                        "last_price": last_price,
+                        "bid": last_price * 0.9999,
+                        "ask": last_price * 1.0001,
+                        "spread_bps": 2.0,
+                        "volume": 10_000_000.0,
+                        "change_percent": 1.0,
+                        "ticker_time": now_ms,
+                        "book_time": now_ms,
+                    }
+                    assessment = assess(df, shape, preferences, metric, [], [], True, tf, as_of_ms=now_ms)
+                    tech = {
+                        "available": True,
+                        "data_source": "local_archive",
+                        "timeframe": tf,
+                        "as_of": now_ms,
+                        "last_price": round(last_price, 2),
+                        "trend": summary.get("trend", "unknown"),
+                        "momentum": summary.get("momentum", "unknown"),
+                        "structure_trend": shape.get("trend", "unknown"),
+                        "rsi": summary.get("rsi"),
+                        "macd": summary.get("macd"),
+                        "adx": summary.get("adx"),
+                        "atr": finite(last.get("atr")),
+                        "vwap": finite(last.get("vwap")),
+                        "support": shape.get("support"),
+                        "resistance": shape.get("resistance"),
+                        "long_score": assessment.get("long_score", 0.0),
+                        "short_score": assessment.get("short_score", 0.0),
+                    }
+                else:
+                    tech = {"available": False, "data_source": "unavailable", "timeframe": tf, "last_price": None}
 
-            news_agg = aggregate_asset_news(sym, analyzed_items)
-            signals.append(combine_news_and_technicals(sym, news_agg, tech))
+                news_agg = aggregate_asset_news(sym, analyzed_items)
+                tf_signals.append(combine_news_and_technicals(sym, news_agg, tech))
 
-        scan_payload = {
-            "scanned_at": datetime.now(UTC).isoformat(),
-            "timeframe": "1h",
-            "focused_symbols": allowed,
-            "signals": signals,
-            "news_items": analyzed_items,
-            "feed_warnings": [],
-            "manual_only": True,
-            "notice": "News sentiment and technical alignment are decision-support signals for manual review only.",
-        }
-        with conn:
-            conn.execute(
-                "INSERT INTO news_scans VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET created_at=excluded.created_at, payload=excluded.payload",
-                ("latest", None, "1h", datetime.now(UTC).isoformat(), json.dumps(scan_payload)),
-            )
+            scan_payload = {
+                "scanned_at": datetime.now(UTC).isoformat(),
+                "timeframe": tf,
+                "focused_symbols": allowed,
+                "signals": tf_signals,
+                "news_items": analyzed_items,
+                "feed_warnings": [],
+                "manual_only": True,
+                "notice": "News sentiment and technical alignment are decision-support signals for manual review only.",
+            }
+            with conn:
+                conn.execute(
+                    "INSERT INTO news_scans VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET timeframe=excluded.timeframe, created_at=excluded.created_at, payload=excluded.payload",
+                    (f"latest:{tf}", None, tf, datetime.now(UTC).isoformat(), json.dumps(scan_payload)),
+                )
+                if tf == "1h":
+                    signals = tf_signals
+                    conn.execute(
+                        "INSERT INTO news_scans VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET timeframe=excluded.timeframe, created_at=excluded.created_at, payload=excluded.payload",
+                        ("latest", None, tf, datetime.now(UTC).isoformat(), json.dumps(scan_payload)),
+                    )
 
         remaining_candles = conn.execute(
             "SELECT symbol, timeframe, COUNT(*) FROM candle_history GROUP BY symbol, timeframe"

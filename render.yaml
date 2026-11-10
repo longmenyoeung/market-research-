@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: perplens-gold-btc-eth
+    runtime: docker
+    region: singapore
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: MCA_LOG_LEVEL
+        value: INFO
+      - key: MCA_TRADING_ENABLED
+        value: "false"
+

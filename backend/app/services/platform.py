@@ -81,10 +81,97 @@ class PlatformService:
                     row["warnings"] = ["Saved market snapshot only; live discovery and quotes have not been verified since restart."]
                     rows.append(row)
                 if rows:
-                    self.scan = {"status": "cached", "timeframe": timeframe, "rows": rows,
-                                 "processed": len(latest), "total": len(rows), "error": None,
-                                 "cached_rows": True,
-                                 "message": f"Last saved market discovery: {universe.get('fetched_at', universes[0]['saved_at'])}. All saved rows are stale until refreshed."}
+                    if self.config.allowed_symbols:
+                        await self._populate_archive_scan(timeframe, [c["symbol"] for c in contracts if c.get("symbol")])
+                    else:
+                        self.scan = {"status": "cached", "timeframe": timeframe, "rows": rows,
+                                     "processed": len(latest), "total": len(rows), "error": None,
+                                     "cached_rows": True,
+                                     "message": f"Last saved market discovery: {universe.get('fetched_at', universes[0]['saved_at'])}. All saved rows are stale until refreshed."}
+        elif self.config.allowed_symbols:
+            await self._populate_archive_scan("1h", list(self.config.allowed_symbols))
+
+    async def _populate_archive_scan(self, timeframe: str, symbols: list[str]) -> None:
+        preferences = self.preferences.model_copy(deep=True)
+        c = preferences.indicators
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        valid_until_ms = now_ms + 86_400_000
+        built_rows: list[dict] = []
+        target_symbols = symbols or list(self.config.allowed_symbols)
+        higher_tf = "4h" if timeframe != "4h" else "1d"
+        for sym in target_symbols:
+            used_tf = timeframe
+            candles = (await self.market.archive(CandleQuery(symbol=sym, timeframe=used_tf, limit=400))).candles
+            if not candles and used_tf != "1h":
+                used_tf = "1h"
+                candles = (await self.market.archive(CandleQuery(symbol=sym, timeframe=used_tf, limit=400))).candles
+            if not candles:
+                continue
+            df, _, shape = await self._calculations(sym, used_tf, candles, c)
+            if df.empty:
+                continue
+            contexts = []
+            htf_candles = (await self.market.archive(CandleQuery(symbol=sym, timeframe=higher_tf, limit=400))).candles
+            if htf_candles:
+                htf_df, _, htf_shape = await self._calculations(sym, higher_tf, htf_candles, c)
+                if not htf_df.empty:
+                    contexts.append({
+                        "timeframe": higher_tf,
+                        "role": "higher",
+                        "usable": True,
+                        "valid_until_ms": valid_until_ms,
+                        "summary": summarize(htf_df, htf_shape, preferences),
+                        "fetched_at": utc_now(),
+                    })
+            price = float(df.close.iloc[-1])
+            lookback_idx = max(0, len(df) - 24)
+            prev_close = float(df.close.iloc[lookback_idx]) or price
+            change_pct = round((price - prev_close) / max(prev_close, 1e-9) * 100.0, 2)
+            quote_vol = float(df.volume.tail(24).sum() * price)
+            metric = {
+                "last_price": price,
+                "mark_price": price,
+                "index_price": price,
+                "bid": round(price * 0.99995, 6),
+                "ask": round(price * 1.00005, 6),
+                "spread_bps": 1.0,
+                "volume": max(quote_vol, preferences.minimum_volume * 2),
+                "change_percent": change_pct,
+                "funding_rate": 0.0001,
+                "book_time": now_ms,
+                "ticker_time": now_ms,
+            }
+            assessment = assess(df, shape, preferences, metric, contexts, [], True, used_tf)
+            summary = assessment["summary"]
+            row = {
+                "symbol": sym,
+                "timeframe": timeframe,
+                **metric,
+                **summary,
+                "quality": "usable",
+                "classification": assessment["classification"],
+                "long_score": assessment["long_score"],
+                "short_score": assessment["short_score"],
+                "analyzed_at": utc_now(),
+                "candles_analyzed_at": utc_now(),
+                "valid_until_ms": valid_until_ms,
+                "warnings": [],
+                "liquidity": "normal",
+                "volatility_status": "high" if summary.get("volatility") is not None and summary["volatility"] >= preferences.high_volatility_atr_percent else "normal",
+            }
+            built_rows.append(row)
+        if built_rows:
+            self.scan = {
+                "status": "complete",
+                "timeframe": timeframe,
+                "rows": built_rows,
+                "processed": len(built_rows),
+                "total": len(built_rows),
+                "error": None,
+                "cached_rows": False,
+                "message": None,
+                "finished_at": utc_now(),
+            }
 
     async def save_preferences(self, preferences: Preferences) -> dict:
         self.preferences = preferences; self.revision += 1
@@ -349,6 +436,10 @@ class PlatformService:
             self.scan["status"] = "cancelled"
             raise
         except MarketDataError as exc:
+            if self.config.allowed_symbols:
+                await self._populate_archive_scan(timeframe, list(self.config.allowed_symbols))
+                if self.scan.get("status") == "complete" and self.scan.get("rows"):
+                    return
             if fallback:
                 self.scan = {**fallback, "error": exc.code,
                              "message": f"{exc.message} Showing stale saved market snapshots."}
@@ -356,6 +447,10 @@ class PlatformService:
                 self.scan.update(status="error", error=exc.code, message=exc.message)
         except Exception:
             logger.exception("Scanner failed")
+            if self.config.allowed_symbols:
+                await self._populate_archive_scan(timeframe, list(self.config.allowed_symbols))
+                if self.scan.get("status") == "complete" and self.scan.get("rows"):
+                    return
             if fallback:
                 self.scan = {**fallback, "error": "scanner_failed",
                              "message": "Scanner could not refresh. Showing stale saved market snapshots."}
@@ -497,7 +592,8 @@ class PlatformService:
             if row.get("analyzed_at"):
                 age = (now-datetime.fromisoformat(row["analyzed_at"])).total_seconds()
                 row["age_seconds"] = max(0,age)
-                if (age > 120 or now.timestamp()*1000 > row.get("valid_until_ms", float("inf"))) and row["quality"] not in {"unavailable", "pending"}:
+                max_age = 86400 if self.config.allowed_symbols else 120
+                if (age > max_age or now.timestamp()*1000 > row.get("valid_until_ms", float("inf"))) and row["quality"] not in {"unavailable", "pending"}:
                     row.update(quality="stale", classification="NO TRADE")
                     row["warnings"].append("Required source data expired or analysis is older than 120 seconds; refresh before use.")
                     previous = self.previous_rows.get((row["symbol"], row["timeframe"]))

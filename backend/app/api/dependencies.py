@@ -1,4 +1,5 @@
 
+import os
 from fastapi import HTTPException, Request
 
 from app.adapters.base import MarketDataProvider
@@ -20,8 +21,9 @@ async def require_mutation_access(request: Request) -> None:
     """Protect state-changing routes.
 
     If MCA_API_KEY is configured, callers must present it. Without a key, only
-    loopback clients may mutate; this covers the bundled browser UI and keeps an
-    unauthenticated app off the network. Read-only GET routes remain open.
+    loopback clients (or same-origin requests on a configured Render deployment)
+    may mutate; this covers the bundled browser UI and keeps an unauthenticated
+    app off the network. Read-only GET routes remain open.
     """
     settings = request.app.state.settings
     if settings.api_key is not None:
@@ -31,5 +33,9 @@ async def require_mutation_access(request: Request) -> None:
                                 headers={"WWW-Authenticate": "ApiKey"})
         return
     host = request.client.host if request.client else ""
+    render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+    origin = request.headers.get("origin")
+    if render_host and request.url.hostname == render_host and (origin is None or origin in settings.websocket_origins):
+        return
     if host not in LOOPBACK_HOSTS:
         raise HTTPException(status_code=403, detail="Mutations are restricted to loopback clients unless MCA_API_KEY is set.")

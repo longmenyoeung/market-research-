@@ -111,8 +111,8 @@ def test_live_study_with_stale_candles_has_no_current_candidate_or_trade_levels(
         assert not any(annotation["kind"] == "plan" for annotation in result["structure"]["annotations"])
 
 
-@pytest.mark.parametrize("timeframe,expected", [("15m", ["1h", "4h"]), ("30m", ["1h", "4h"]),
-                                               ("1h", ["4h"]), ("4h", ["1d"])])
+@pytest.mark.parametrize("timeframe,expected", [("5m", ["1h", "4h"]), ("15m", ["1h", "4h"]),
+                                               ("30m", ["1h", "4h"]), ("1h", ["4h"]), ("4h", ["1d"])])
 def test_short_term_context_is_explicit_and_strictly_higher(timeframe, expected):
     assert higher_context(timeframe) == expected
     assert all(INTERVAL_MS[context] > INTERVAL_MS[timeframe] for context in expected)

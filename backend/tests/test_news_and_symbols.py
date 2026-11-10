@@ -135,3 +135,10 @@ def test_combined_news_and_technicals_buy_and_sell_plans(settings):
 
     app = create_app(settings)
     assert "/api/v1/news/scan" in app.openapi()["paths"]
+
+
+def test_5m_and_4h_indicator_context_plans():
+    from app.schemas.indicator_study import higher_context
+
+    assert higher_context("5m") == ["1h", "4h"]
+    assert higher_context("4h") == ["1d"]

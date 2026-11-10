@@ -7,7 +7,7 @@ from app.schemas.platform import StrictModel, Finite
 from app.schemas.simulation import SimulationOptions
 
 SHORT_TERM_CONTEXT: dict[Timeframe, list[Timeframe]] = {
-    "15m": ["1h", "4h"], "30m": ["1h", "4h"], "1h": ["4h"], "4h": ["1d"],
+    "5m": ["1h", "4h"], "15m": ["1h", "4h"], "30m": ["1h", "4h"], "1h": ["4h"], "4h": ["1d"],
 }
 
 

@@ -86,7 +86,7 @@ async def _load_technical_summary(platform: "PlatformService", symbol: str, time
             candles = []
 
     if not candles:
-        for candidate_tf in dict.fromkeys([timeframe, "1h", "4h", "1d", "30m"]):
+        for candidate_tf in dict.fromkeys([timeframe, "5m", "15m", "30m", "1h", "4h", "1d"]):
             try:
                 archived = await platform.market.archive(CandleQuery(symbol=symbol, timeframe=candidate_tf, limit=400))
                 closed = [c for c in archived.candles if c.is_closed]
@@ -237,16 +237,17 @@ async def run_news_scan(platform: "PlatformService", request: NewsScanRequest) -
             "No exchange orders are placed automatically."
         ),
     }
-    await platform.store.put("news_scans", "latest", result)
+    await platform.store.put("news_scans", "latest", result, timeframe=request.timeframe)
+    await platform.store.put("news_scans", f"latest:{request.timeframe}", result, timeframe=request.timeframe)
     return result
 
 
 async def get_latest_news_scan(platform: "PlatformService", timeframe: str = "1h") -> dict:
-    """Return the latest stored news scan or generate an initial offline-safe scan."""
-    saved = await platform.store.records("news_scans", limit=1)
+    """Return the latest stored news scan for the requested timeframe or generate an initial offline-safe scan."""
+    saved = await platform.store.records("news_scans", timeframe=timeframe, limit=1)
     if saved and isinstance(saved[0].get("data"), dict):
         data = saved[0]["data"]
-        if data.get("signals"):
+        if data.get("signals") and data.get("timeframe") == timeframe:
             return data
     return await run_news_scan(
         platform,

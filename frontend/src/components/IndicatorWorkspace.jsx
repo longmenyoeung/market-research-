@@ -8,10 +8,10 @@ import useLiveCandles from '../hooks/useLiveCandles.js';
 import {currentEntrySignal} from '../studyDrawings.js';
 import './IndicatorWorkspace.css';
 
-const shortTermTimeframes=['15m','30m','1h','4h'];
-const contextPlans={'15m':['1h','4h'],'30m':['1h','4h'],'1h':['4h'],'4h':['1d']};
+const shortTermTimeframes=['5m','15m','30m','1h','4h'];
+const contextPlans={'5m':['1h','4h'],'15m':['1h','4h'],'30m':['1h','4h'],'1h':['4h'],'4h':['1d']};
 
-export default function IndicatorWorkspace({markets,initialSymbol,timeframe,onTimeframeChange,onSimulate}){
+export default function IndicatorWorkspace({markets,initialSymbol,timeframe,onTimeframeChange,onSimulate,autoBuild=false}){
  const [symbol,setSymbol]=useState(initialSymbol||''),[source,setSource]=useState('archive');
  const [rules,setRules]=useState({minimum_adx:20,minimum_relative_volume:1,atr_stop_multiple:1.5,signal_spacing_bars:8});
  const [result,setResult]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState(null);
@@ -19,8 +19,9 @@ export default function IndicatorWorkspace({markets,initialSymbol,timeframe,onTi
  const [profile,setProfile]=useState('men_crypto'),[higher,setHigher]=useState(null),[alerts,setAlerts]=useState(true);
  const [simulation,setSimulation]=useState({equity:10000,risk_percent:0.25,max_exposure_percent:100,reward_multiple:2,fee_bps:5,slippage_bps:5,spread_bps:2,funding_bps_per_8h:0,max_holding_bars:100,break_even:false,break_even_at_r:1,trailing_stop:false,trailing_atr:1.5,trailing_activation_r:1.5});
  const version=useRef(0),pending=useRef(false),studyRequest=useRef(null),refreshStudy=useRef(null),[,setTick]=useState(0);
- const autoLoad=useRef(false),loadedSelection=useRef('');
- useEffect(()=>{if(!symbol&&initialSymbol)setSymbol(initialSymbol);},[initialSymbol,symbol]);
+ const autoLoad=useRef(Boolean(autoBuild)),loadedSelection=useRef('');
+ useEffect(()=>{if(initialSymbol&&initialSymbol!==symbol)setSymbol(initialSymbol);},[initialSymbol]);
+ useEffect(()=>{if(autoBuild)autoLoad.current=true;},[autoBuild]);
  useEffect(()=>{version.current++;studyRequest.current?.abort();pending.current=false;setResult(null);setBusy(false);setError('');},[symbol,timeframe,source,profile]);
  useEffect(()=>()=>{version.current++;studyRequest.current?.abort();},[]);
  useEffect(()=>setHigher(null),[timeframe]);

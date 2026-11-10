@@ -1,0 +1,82 @@
+"""Production startup entrypoint for Render (and container hosts)."""
+
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = ROOT / "backend"
+DB_PATH = BACKEND_DIR / "data" / "market_data.db"
+
+
+def ensure_render_env() -> None:
+    render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "").strip()
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+
+    if render_host and "MCA_ALLOWED_HOSTS" not in os.environ:
+        hosts = ["127.0.0.1", "localhost", "[::1]", render_host]
+        os.environ["MCA_ALLOWED_HOSTS"] = json.dumps(hosts)
+
+    if render_url and "MCA_WEBSOCKET_ORIGINS" not in os.environ:
+        origins = [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+            render_url,
+        ]
+        os.environ["MCA_WEBSOCKET_ORIGINS"] = json.dumps(origins)
+
+
+def database_needs_seed() -> bool:
+    if not DB_PATH.is_file():
+        return True
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='candle_history'"
+            ).fetchone()
+            if not row or row[0] == 0:
+                return True
+            count = conn.execute(
+                "SELECT COUNT(*) FROM candle_history WHERE symbol IN ('XAUTUSDT','BTCUSDT','ETHUSDT') AND timeframe='5m'"
+            ).fetchone()[0]
+            return count < 100
+        finally:
+            conn.close()
+    except Exception:
+        return True
+
+
+def main() -> int:
+    ensure_render_env()
+    # Do not seed synthetic candles: the archive fills only from real public market data.
+
+    port = os.environ.get("PORT", "10000")
+    print(f"Starting Render web service on 0.0.0.0:{port}", flush=True)
+    return subprocess.call(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--app-dir",
+            str(BACKEND_DIR),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(port),
+            "--proxy-headers",
+            "--forwarded-allow-ips=*",
+        ],
+        cwd=ROOT,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
