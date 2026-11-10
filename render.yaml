@@ -2,7 +2,7 @@ services:
   - type: web
     name: perplens-gold-btc-eth
     runtime: docker
-    region: singapore
+    region: frankfurt
     plan: free
     healthCheckPath: /health
     envVars:

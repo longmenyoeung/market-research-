@@ -3,13 +3,11 @@
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = ROOT / "backend"
-DB_PATH = BACKEND_DIR / "data" / "market_data.db"
 
 
 def ensure_render_env() -> None:
@@ -29,27 +27,6 @@ def ensure_render_env() -> None:
             render_url,
         ]
         os.environ["MCA_WEBSOCKET_ORIGINS"] = json.dumps(origins)
-
-
-def database_needs_seed() -> bool:
-    if not DB_PATH.is_file():
-        return True
-    try:
-        conn = sqlite3.connect(DB_PATH, timeout=10)
-        try:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='candle_history'"
-            ).fetchone()
-            if not row or row[0] == 0:
-                return True
-            count = conn.execute(
-                "SELECT COUNT(*) FROM candle_history WHERE symbol IN ('XAUTUSDT','BTCUSDT','ETHUSDT') AND timeframe='5m'"
-            ).fetchone()[0]
-            return count < 100
-        finally:
-            conn.close()
-    except Exception:
-        return True
 
 
 def main() -> int:
